@@ -1,0 +1,27 @@
+# macOS and Xcode
+.DS_Store
+.build/
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.swiftpm/
+
+# Editor bundle
+editor/node_modules/
+editor/dist/
+
+# Recordings, models, and keys. Never commit.
+*.caf
+*.m4a
+*.wav
+!**/Fixtures/*.caf
+Models/
+*.p12
+*.cer
+*.certSigningRequest
+.env*
+
+# Private, never pushed
+.plan/
+CLAUDE.local.md
