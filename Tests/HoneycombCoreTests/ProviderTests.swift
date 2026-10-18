@@ -183,7 +183,7 @@ private struct StreamChat: ChatProvider {
         #expect(body.model == "test-model" && body.messages == chat.messages && body.maxTokens == 2_000 && body.stream == true)
     }
 
-    @Test("on api.openai.com, max_completion_tokens replaces max_tokens, and reasoning models get no temperature")
+    @Test("on api.openai.com, max_completion_tokens replaces max_tokens, and reasoning models get no temperature and low effort")
     func openAIReasoningModels() async throws {
         let server = StubServer(host: "api.openai.com", .init(body: sse(content("ok"), "[DONE]")))
         let provider = OpenAICompatibleProvider(baseURL: server.url("/v1"), apiKey: "sk-test", isLocal: false, session: server.session)
@@ -195,7 +195,9 @@ private struct StreamChat: ChatProvider {
         let bodies = try server.requests.map(SentBody.init)
         #expect(bodies.map(\.model) == ["gpt-5-mini", "o3", "o4-mini", "gpt-4.1"])
         #expect(bodies.map(\.maxTokens) == [nil, nil, nil, nil])
-        #expect(bodies.map(\.maxCompletionTokens) == [2_000, 2_000, 2_000, 2_000])
+        #expect(bodies.map(\.maxCompletionTokens) == [27_000, 27_000, 27_000, 2_000],
+                "hidden reasoning counts against the limit, so reasoning models get room for it on top of the answer")
+        #expect(bodies.map(\.reasoningEffort) == ["low", "low", "low", nil])
         #expect(bodies.map(\.temperature) == [nil, nil, nil, 0.3])
     }
 
@@ -219,7 +221,8 @@ private struct StreamChat: ChatProvider {
         _ = try await provider.complete(ChatRequest(model: model, messages: chat.messages))
 
         let body = try SentBody(#require(server.requests.first))
-        #expect(body.maxTokens == nil && body.maxCompletionTokens != nil && body.temperature == nil)
+        #expect(body.maxTokens == nil && body.maxCompletionTokens == 27_000 && body.temperature == nil)
+        #expect(body.reasoningEffort == "low")
     }
 
     @Test("an Ollama stream drops a <think> block whose tags are split across chunks")
@@ -588,6 +591,7 @@ private struct SentBody: Decodable {
     var input: [String]?
     var maxTokens: Int?
     var maxCompletionTokens: Int?
+    var reasoningEffort: String?
     var temperature: Double?
     var stream: Bool?
 
