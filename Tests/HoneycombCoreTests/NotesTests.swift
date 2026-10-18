@@ -91,6 +91,16 @@ struct MarkdownTests {
         #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
     }
 
+    @Test func aListItemWithTwoParagraphsRoundTrips() {
+        let doc = PMNode.doc([PMNode(type: "bulletList", content: [
+            PMNode(type: "listItem", attrs: ["blockId": .string("b1")], content: [
+                PMNode(type: "paragraph", content: [.text("a")]), PMNode(type: "paragraph", content: [.text("b")]),
+            ]),
+            PMNode(type: "listItem", attrs: ["blockId": .string("b2")], content: [PMNode(type: "paragraph", content: [.text("c")])]),
+        ])])
+        #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
+    }
+
     @Test func htmlExportKeepsTheListStart() {
         #expect(NoteExport.html(Markdown.document("3. a\n4. b")) == "<ol start=\"3\"><li>a</li><li>b</li></ol>")
     }
