@@ -95,9 +95,10 @@ public struct CaptureHealthMachine: Sendable {
 
         case .routeChanged(let now):
             switch phase {
-            case .idle, .paused, .restarting, .waitingToRestart:
+            // No audio has arrived while starting, so the startup grace already restarts a dead recorder.
+            case .idle, .paused, .starting, .restarting, .waitingToRestart:
                 return []
-            case .starting, .running, .debouncingRoute:
+            case .running, .debouncingRoute:
                 phase = .debouncingRoute(untilMs: now + policy.routeDebounceMs)
                 return []
             case .lost:
