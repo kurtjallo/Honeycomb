@@ -68,8 +68,9 @@ public actor MeetingRecorder {
         guard await micAccess() else { throw RecordingError.micDenied }
 
         let now = Date()
+        let draft = try existing.flatMap { try database.meeting($0) }
         var meeting: Meeting
-        if let existing, let draft = try database.meeting(existing) {
+        if let draft {
             meeting = draft
         } else {
             meeting = Meeting(title: title ?? Meeting.defaultTitle(appName: callApp?.name, at: now),
@@ -86,8 +87,12 @@ public actor MeetingRecorder {
         let session = RecordingSession(meetingID: meeting.id, folder: folder, recorders: makeRecorders(), startedAt: now)
         do {
             try await session.start()
+            try Task.checkCancellation()
         } catch {
-            try? database.setState(meeting.id, .failed, detail: "capture_failed")
+            await session.stop()
+            try? FileManager.default.removeItem(at: folder)
+            if let draft { try? database.save(draft) } else { try? database.deleteMeeting(meeting.id) }
+            if error is CancellationError { throw error }
             throw RecordingError.captureFailed
         }
         return (meeting.id, session)
