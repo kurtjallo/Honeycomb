@@ -310,6 +310,7 @@ final class AppModel {
             Task { send(confirmQuit() ? .quitConfirmed : .quitCancelled) }
         case .quit:
             Task {
+                await EditorHost.shared.flush()
                 await pipeline?.stop()
                 NSApp.reply(toApplicationShouldTerminate: true)
             }
