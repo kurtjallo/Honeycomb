@@ -163,6 +163,7 @@ public enum Markdown {
             }
             return nil
         }
+        func adding(_ mark: PMMark) -> [PMMark] { marks.contains(mark) ? marks : marks + [mark] }
 
         while index < chars.count {
             let character = chars[index]
@@ -174,14 +175,14 @@ public enum Markdown {
                       index + 1 < chars.count, chars[index + 1] == character,
                       let close = find([character, character], from: index + 2), close > index + 2 {
                 flush()
-                nodes += inline(String(chars[index + 2..<close]), marks: marks + [.bold])
+                nodes += inline(String(chars[index + 2..<close]), marks: adding(.bold))
                 index = close + 2
             } else if character == "*" || (character == "_" && (index == 0 || !chars[index - 1].isLetter)),
                       index + 1 < chars.count, chars[index + 1] != " ",
                       let close = find([character], from: index + 1), close > index + 1,
                       character == "*" || close + 1 >= chars.count || !chars[close + 1].isLetter {
                 flush()
-                nodes += inline(String(chars[index + 1..<close]), marks: marks + [.italic])
+                nodes += inline(String(chars[index + 1..<close]), marks: adding(.italic))
                 index = close + 1
             } else if character == "[", let middle = find(["]", "("], from: index + 1),
                       let close = find([")"], from: middle + 2) {
