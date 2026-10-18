@@ -17,7 +17,7 @@ final class EditorHost: NSObject {
     private var pending: [(String, [String: Any])] = []
     /// The latest of each message that sets what the page shows, sent again to a new page.
     private var shown: [String: [String: Any]] = [:]
-    private static let replayed = ["load"]
+    private static let replayed = ["load", "setSources", "setTheme"]
     private var loadID = 0
     /// Save closures by load ID. The page tags every edit with the ID of the load it was made in,
     /// so an edit that arrives after the next note loaded still saves to its own note.
@@ -190,7 +190,7 @@ extension EditorHost: WKNavigationDelegate {
         return .cancel
     }
 
-    /// If the web process dies, reload and show the last document again.
+    /// If the web process dies, reload. The new page gets the last document, sources, and theme again.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         Log.error("editor.process_terminated")
         reload()
