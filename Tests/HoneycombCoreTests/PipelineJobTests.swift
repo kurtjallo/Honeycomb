@@ -125,6 +125,23 @@ struct PipelineJobTests {
         await pipeline.stop()
     }
 
+    @Test func stopPutsAJobThatIgnoresCancellationBackAtOnce() async throws {
+        let latch = Latch()
+        await handle { _ in
+            await latch.wait()
+            return .written(UUID())
+        }
+        await pipeline.start()
+        await pipeline.enqueue(.enhance, meeting: meeting.id)
+        #expect(try await eventually { try enhanceJob()?.status == .running })
+
+        await pipeline.stop()
+        let job = try #require(try enhanceJob())
+        #expect(job.status == .queued, "a quit right now leaves the job queued, not running")
+        #expect(job.attempt == 0, "a normal quit doesn't count as a crash")
+        await latch.open()
+    }
+
     @Test func aFailedJobRetriesAfterThePolicyDelay() async throws {
         let calls = CallCounter()
         await handle { _ in
@@ -240,5 +257,22 @@ struct PipelineJobTests {
         #expect(await updates.count == emitted, "meeting observers are not woken")
         await pipeline.stop()
         watcher.cancel()
+    }
+}
+
+/// Blocks until opened, and ignores cancellation, like a model that can't be interrupted.
+actor Latch {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        for waiter in waiters { waiter.resume() }
+        waiters = []
     }
 }
