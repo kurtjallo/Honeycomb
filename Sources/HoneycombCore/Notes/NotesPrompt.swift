@@ -104,12 +104,14 @@ public enum NotesPrompt {
     Start each bullet with the [mm:ss] time it came from. Use only what the transcript says. Output only the bullets.
     """
 
-    /// Splits the model's output into the title line and the notes body.
-    public static func parseOutput(_ text: String) -> (title: String?, body: String) {
+    /// Splits the model's output into the title line and the notes body. A first line that names
+    /// one of the template's sections is a heading the model wrote at the wrong level, not a title.
+    public static func parseOutput(_ text: String, sections: [String]) -> (title: String?, body: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("# ") else { return (nil, trimmed) }
         let firstLine = trimmed.prefix { $0 != "\n" }
         let title = firstLine.dropFirst(2).trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "*"))
+        if sections.contains(where: { $0.caseInsensitiveCompare(title) == .orderedSame }) { return (nil, trimmed) }
         let body = trimmed.dropFirst(firstLine.count).trimmingCharacters(in: .whitespacesAndNewlines)
         return (title.isEmpty ? nil : String(title.prefix(80)), body)
     }

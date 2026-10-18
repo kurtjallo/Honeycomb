@@ -62,7 +62,7 @@ public struct NoteWriter: Sendable {
                 raw += piece
                 if let lastWrite, ContinuousClock.now - lastWrite < .seconds(1) { return }
                 if lastWrite == nil { Log.info("notes.started", ["meeting": .id(meetingID)]) }
-                note.markdown = NotesPrompt.parseOutput(raw).body
+                note.markdown = NotesPrompt.parseOutput(raw, sections: input.template.sections).body
                 try database.saveEnhanced(note)
                 lastWrite = .now
             }
@@ -76,7 +76,7 @@ public struct NoteWriter: Sendable {
             throw cancelled ? CancellationError() : error
         }
 
-        let output = NotesPrompt.parseOutput(raw)
+        let output = NotesPrompt.parseOutput(raw, sections: input.template.sections)
         let doc = Authorship.apply(to: Markdown.document(output.body), userNotes: input.userNotes)
         note.doc = doc.encoded()
         note.markdown = output.body
