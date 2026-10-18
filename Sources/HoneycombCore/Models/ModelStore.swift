@@ -102,7 +102,7 @@ public actor ModelStore {
         Log.info("model.download_finished")
     }
 
-    /// Retries network failures with growing waits, so a download resumes when Wi-Fi comes back.
+    /// Retries network and server failures with growing waits, so a download resumes when Wi-Fi comes back.
     /// A checksum mismatch deletes the file and fails, because retrying would fetch the same bytes.
     private func fetchVerified(_ file: ModelFile, of spec: ModelSpec, to target: URL, completedBefore: Int64) async throws {
         var failures = 0
@@ -139,10 +139,15 @@ public actor ModelStore {
         }
     }
 
-    /// The wait before trying a failed file again, or nil to fail the install.
+    /// The wait before trying a failed file again, or nil to fail the install. Only failures that can
+    /// pass on their own are retried: the network, and a server that is down or rate limiting.
     static func retryWait(after error: any Error, failures: Int) -> Duration? {
         let waits: [Duration] = [.seconds(2), .seconds(5), .seconds(10), .seconds(30)]
-        if error is DownloadError { return nil }
+        switch error {
+        case is URLError: break
+        case DownloadError.http(let status) where status == 429 || status >= 500: break
+        default: return nil
+        }
         return waits[min(failures, waits.count - 1)]
     }
 
