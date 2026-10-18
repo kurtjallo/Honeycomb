@@ -22,7 +22,6 @@ final class AppModel {
     private(set) var modelStates: [String: ModelStore.State] = [:]
     private(set) var providers: [ProviderRecord] = []
     private(set) var routes: [AITask: Route] = [:]
-    /// The "Ask once" AI choice, shown at one launch only. After that the "Choose…" banner opens it.
     var showAIChoice = false
     private static let aiChoiceAskedKey = "honeycomb.aiChoiceAsked"
 
@@ -34,7 +33,6 @@ final class AppModel {
     private var recorder: MeetingRecorder?
     private var modelTask: Task<Void, Never>?
     private var detector: CallDetector?
-    /// Counts route changes, so a finished 9B download can tell whether the user chose since it began.
     private var routeChanges = 0
     /// Seconds left before an automatic stop, while the user can still keep recording.
     private(set) var autoStopCountdown: Int?
@@ -45,7 +43,6 @@ final class AppModel {
     let pill = RecordingPillController()
 
     var isRecording: Bool { lifecycle.phase.meetingID != nil }
-    /// macOS shows its permission prompts during this wait.
     var isStartingRecording: Bool { lifecycle.phase.isStarting }
     var isStoppingRecording: Bool { lifecycle.phase.isStopping }
     var recordingMeetingID: UUID? { lifecycle.phase.meetingID }
@@ -205,9 +202,6 @@ final class AppModel {
         }
     }
 
-    /// The optional 9B. When it is ready, notes on the built-in model move to it, unless the user
-    /// picked a route while it downloaded. Chat stays on the 4B, the only model allowed to load
-    /// during a recording.
     func downloadLargeModel() {
         guard let store else { return }
         let changesAtStart = routeChanges
@@ -268,7 +262,6 @@ final class AppModel {
         send(.quitRequested)
     }
 
-    /// A selected draft note is recorded into, not beside.
     private var startTarget: StartTarget {
         guard let selection, (try? database?.meeting(selection))??.state == .draft else { return .newMeeting }
         return .draft(selection)
@@ -278,8 +271,6 @@ final class AppModel {
         Int64((ContinuousClock.now - launchedAt) / .milliseconds(1))
     }
 
-    /// The gate is written before any command runs, so the pipeline holds model jobs back before
-    /// `recordingStarted()` looks for one to stop.
     private func send(_ event: RecordingEvent) {
         let commands = lifecycle.handle(event)
         if let host, host.gate.isRecording != lifecycle.phase.holdsModels {
@@ -396,7 +387,6 @@ final class AppModel {
         try? database?.setCurrentEnhanced(meeting.id, version.id)
     }
 
-    /// Copies notes as rich text and Markdown, so headings and lists survive a paste.
     func copyNotes(_ note: EnhancedNote) {
         let doc = note.doc.flatMap(PMNode.decode) ?? Markdown.document(note.markdown)
         let pasteboard = NSPasteboard.general
@@ -439,10 +429,8 @@ final class AppModel {
         return nil
     }
 
-    /// The meeting waiting on the Delete confirmation.
     var meetingToDelete: Meeting?
 
-    /// A meeting the recorder or the pipeline is still working on keeps its audio and rows.
     func canDelete(_ meeting: Meeting) -> Bool {
         let state = meetings.first { $0.id == meeting.id }?.state ?? meeting.state
         return meeting.id != recordingMeetingID && ![.recording, .paused, .transcribing, .writingNotes].contains(state)
@@ -468,8 +456,6 @@ final class AppModel {
         selection = meeting.id
     }
 
-    /// SwiftUI's action that creates the main window, for when it was never opened this launch.
-    /// The menu bar label sets it, because it is the one view that exists from launch to quit.
     @ObservationIgnored var openWindow: OpenWindowAction?
 
     func showMainWindow() {

@@ -18,8 +18,6 @@ export function start(scroller: HTMLElement): Editor {
     editorProps: { attributes: { 'aria-label': 'Notes' } },
   })
 
-  // Swift's ID for the document on screen. Each docChanged carries it, so Swift saves the edit
-  // to the note it came from even after another note has replaced it.
   let loadId = 0
   let pendingDocChanged: ReturnType<typeof setTimeout> | undefined
   const reportEdit = () => {

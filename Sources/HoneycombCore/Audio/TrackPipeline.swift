@@ -43,8 +43,6 @@ final class TrackPipeline: @unchecked Sendable {
     private var writer: AACSegmentWriter?
     private var current: SegmentMeta?
     private var timer: DispatchSourceTimer?
-    /// Signals when a stop that outlived its time limit returns. Until then the recorder is off limits,
-    /// because that stop would tear down whatever capture is current when it finishes.
     private var hungStop: DispatchSemaphore?
     private let readBuffer: UnsafeMutablePointer<Float>
     private let readCapacity = 96_000
@@ -111,7 +109,6 @@ final class TrackPipeline: @unchecked Sendable {
     }
 
     /// Core Audio teardown can hang, so give up after the time limit and keep what was written.
-    /// Returns the semaphore the stop signals when it finally returns, if it ran out of time.
     private func stopRecorder() -> DispatchSemaphore? {
         let done = DispatchSemaphore(value: 0)
         let recorder = self.recorder

@@ -88,7 +88,6 @@ extension ProviderError {
         default: break
         }
         if contextLimitPhrases.contains(where: { body.contains($0) }) { return .contextTooLong }
-        // A gateway's 504 "took too long" is about time, not the prompt.
         if (400..<500).contains(status), body.contains("too long") { return .contextTooLong }
         if body.contains("overloaded_error") { return .rateLimited(retryAfter: retryAfter) }
         switch status {
@@ -456,8 +455,6 @@ protocol ChatStreamDecoder: Sendable {
     init()
     /// A `.finished` delta ends the stream.
     mutating func decode(_ event: SSEEvent) throws -> [ChatDelta]
-    /// The deltas to send when the server closes the stream. They end with `.finished` only if the
-    /// server said why the answer stopped.
     mutating func end() -> [ChatDelta]
 }
 
@@ -585,7 +582,6 @@ struct ProviderTransport: Sendable {
         }
         // A 200 with no events at all would otherwise read as an empty answer.
         guard sawEvent else { throw ProviderError.invalidResponse }
-        // A stream closed before the server said it was done was cut off, like a dropped connection.
         guard send(decoder.end(), to: continuation, tracker: tracker) else { throw ProviderError.unreachable }
     }
 

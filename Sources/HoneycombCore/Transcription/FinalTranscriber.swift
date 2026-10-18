@@ -38,8 +38,6 @@ public struct FinalTranscriber: Sendable {
 }
 
 /// On laptop speakers, the mic also hears the other side, so their words show up twice.
-/// A "Me" line near a "Them" line is marked duplicate when nearly all its words appear in theirs,
-/// in the same order. A real reply often repeats a few of their words ("Yes, ship on Friday.").
 public enum Dedupe {
     public static func duplicateMeLines(_ lines: [TranscriptLine], windowMs: Int64 = 1_500,
                                         threshold: Double = 0.8) -> Set<Int> {
@@ -60,7 +58,6 @@ public enum Dedupe {
         text.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
     }
 
-    /// The longest run of words both share in the same order, gaps allowed.
     static func commonInOrder(_ a: [String], _ b: [String]) -> Int {
         var previous = [Int](repeating: 0, count: b.count + 1)
         for word in a {
@@ -106,8 +103,6 @@ public enum DictionaryCorrector {
         text.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    /// Close spelling, before or after common spelling swaps ("leigh" and "lee"). Vowels still
-    /// count, so a common word never becomes a short name that shares its consonants ("been", "Ben").
     static func matches(_ candidate: String, _ target: String, minSimilarity: Double) -> Bool {
         similarity(candidate, target) >= minSimilarity
             || similarity(soundSpelling(candidate), soundSpelling(target)) >= minSimilarity

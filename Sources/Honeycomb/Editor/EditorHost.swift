@@ -15,12 +15,9 @@ final class EditorHost: NSObject {
     let webView: WKWebView
     private(set) var isReady = false
     private var pending: [(String, [String: Any])] = []
-    /// The latest of each message that sets what the page shows, sent again to a new page.
     private var shown: [String: [String: Any]] = [:]
     private static let replayed = ["load", "setSources", "setTheme"]
     private var loadID = 0
-    /// Save closures by load ID. The page tags every edit with the ID of the load it was made in,
-    /// so an edit that arrives after the next note loaded still saves to its own note.
     private var saves: [Int: (PMNode) -> Void] = [:]
     private var onSourceClicked: ((String, CGRect) -> Void)?
 
@@ -85,7 +82,6 @@ final class EditorHost: NSObject {
         send("focus", [:])
     }
 
-    /// Saves an edit the page has not reported yet. Call before quitting.
     func flush() async {
         guard isReady else { return }
         _ = try? await webView.callAsyncJavaScript(Self.receive, arguments: ["envelope": Self.envelope("flush", [:])],
@@ -117,8 +113,6 @@ final class EditorHost: NSObject {
         }
     }
 
-    /// Once the page shows a load, it reports no more edits for older ones, so their closures go.
-    /// A rejected load must not leave the previous note on screen, so a read-only notice replaces it.
     private func loadReplied(_ id: Int, ok: Bool) {
         if ok {
             saves = saves.filter { $0.key >= id }
@@ -194,7 +188,6 @@ extension EditorHost: WKNavigationDelegate {
         return .cancel
     }
 
-    /// If the web process dies, reload. The new page gets the last document, sources, and theme again.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         Log.error("editor.process_terminated")
         reload()

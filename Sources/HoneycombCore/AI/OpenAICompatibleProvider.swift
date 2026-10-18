@@ -20,9 +20,6 @@ public struct OpenAICompatibleProvider: ChatProvider, EmbeddingProvider {
         transport = ProviderTransport(session: session, policy: policy ?? (isLocal ? .local : .cloud), gate: gate)
     }
 
-    /// People paste base URLs with or without `/v1`, and sometimes the full endpoint copied from a
-    /// curl example, which is trimmed off. A path that already names a version, such as `/api/v1` or
-    /// Gemini's `/v1beta/openai`, is used as given.
     static func apiRoot(_ url: URL) -> URL {
         var url = url
         for endpoint in [["chat", "completions"], ["messages"]] where url.pathComponents.suffix(endpoint.count).elementsEqual(endpoint) {
@@ -73,8 +70,7 @@ private struct ChatBody: Encodable, Sendable {
 
     /// Hidden reasoning counts against `max_completion_tokens`, and a limit reached while reasoning
     /// leaves an empty answer. OpenAI's reasoning guide says to reserve at least 25,000 tokens for
-    /// reasoning when starting out, so that much goes on top of the answer's own budget. Low effort
-    /// keeps the reasoning well inside it, and only the tokens used are billed.
+    /// reasoning when starting out, so that much goes on top of the answer's own budget.
     static let reasoningTokens = 25_000
 
     init(_ request: ChatRequest, isOpenAI: Bool) {
@@ -95,7 +91,6 @@ private struct ChatBody: Encodable, Sendable {
         }
     }
 
-    /// `name` has any vendor prefix removed, such as OpenRouter's `openai/` in `openai/gpt-5`.
     static func isReasoningFamily(_ name: String) -> Bool {
         name.hasPrefix("gpt-5") || (name.first == "o" && name.dropFirst().first?.isNumber == true)
     }

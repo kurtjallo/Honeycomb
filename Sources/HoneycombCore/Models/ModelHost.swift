@@ -60,7 +60,6 @@ public actor ModelHost {
     private var speech: SpeechModels?
     private var speechLeases = 0
     private var speechUnload: Task<Void, Never>?
-    /// Written by the app's recording lifecycle. Read here and by the pipeline.
     public nonisolated let gate = RecordingGate()
     private var unloadHandlers: [ModelPolicy.Model: @Sendable () async -> Void] = [:]
     private var loaded: Set<ModelPolicy.Model> = []

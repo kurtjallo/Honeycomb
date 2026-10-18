@@ -4,8 +4,7 @@ public struct DetectionPolicy: Sendable, Equatable {
     public var askAfterMs: Int64 = 3_000
     /// After the recorded app lets go of the mic, wait this long before calling the call ended.
     public var endAfterMs: Int64 = 5_000
-    /// While no browser window title shows a meeting, read the titles again this often. The meeting
-    /// tab may still be loading, or in a window the user is not looking at yet.
+    /// While no browser window title shows a meeting, read the titles again this often.
     public var titleRetryMs: Int64 = 2_000
     /// Stop reading titles this long after the first read, and stay quiet for that mic use.
     public var titleGiveUpAfterMs: Int64 = 60_000
@@ -41,7 +40,6 @@ public struct CallPrompt: Sendable, Equatable {
 public enum DetectionEvent: Sendable, Equatable {
     case micStarted(key: String, bundleID: String, atMs: Int64)
     case micStopped(key: String, atMs: Int64)
-    /// Every window title the browser has open. Empty when Accessibility could not read them.
     case titleRead(key: String, titles: [String])
     case tick(atMs: Int64)
     case startNotes(key: String)
@@ -68,16 +66,13 @@ public enum DetectionCommand: Sendable, Equatable {
 public struct DetectionMachine: Sendable {
     enum Phase: Sendable, Equatable {
         case waiting(sinceMs: Int64)
-        /// A title read is out. `sinceMs` is when the first read for this mic use went out.
         case readingTitle(sinceMs: Int64, readMs: Int64)
-        /// No window title showed a meeting at the read sent at `readMs`.
         case titleUnmatched(sinceMs: Int64, readMs: Int64)
         case prompted
         case quiet
         case recording
     }
 
-    /// Whether the recorded call app still holds the mic.
     enum CallEnd: Sendable, Equatable {
         case ongoing
         case ending(sinceMs: Int64)
@@ -188,7 +183,6 @@ public struct DetectionMachine: Sendable {
 
         case .startNotes(let key):
             guard var activation = activations[key], activation.phase == .prompted else { return [] }
-            // The call counts as recorded only once capture starts, in `.recordingStarted(key)`.
             activation.phase = .quiet
             activations[key] = activation
             return [.hide(key: key), .startRecording(prompt(key, activation))]
@@ -224,7 +218,6 @@ public struct DetectionMachine: Sendable {
     }
 }
 
-/// Recognizes a web meeting from a browser window title, which is the title of the window's active tab.
 public enum MeetingSites {
     public static func match(_ title: String?) -> String? {
         guard let title else { return nil }

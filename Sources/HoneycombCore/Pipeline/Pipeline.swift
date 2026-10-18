@@ -61,7 +61,7 @@ public actor Pipeline {
     }
 
     /// Ends the loop. The job in progress stops and goes back in the queue at once, without using
-    /// an attempt, because a model may finish its current step after the app has quit.
+    /// an attempt.
     public func stop() {
         loop?.cancel()
         loop = nil
@@ -98,8 +98,6 @@ public actor Pipeline {
         current.task.cancel()
     }
 
-    /// Jobs that load a model on this Mac wait while a call is recorded. Notes count when they run
-    /// on the built-in model or on a server on this Mac, such as Ollama on localhost.
     private func usesThisMac(_ kind: JobKind) -> Bool {
         switch kind {
         case .finalizeAudio, .mirrorMarkdown: false
@@ -128,7 +126,6 @@ public actor Pipeline {
                 }
                 Log.info("pipeline.recovered_meeting", ["meeting": .id(meeting.id)])
             }
-            // A crash between saving a stopped meeting and queueing its first job strands it here.
             for meeting in try database.meetings(in: [.transcribing])
             where try !database.jobs(for: meeting.id).contains(where: { [.queued, .running].contains($0.status) }) {
                 try database.enqueue(.finalizeAudio, meeting: meeting.id)
@@ -142,7 +139,6 @@ public actor Pipeline {
     private func run() async {
         while true {
             if Task.isCancelled { return }
-            // The gate is read with no await before the claim, so `recordingStarted()` always finds the claimed job.
             let skipping: Set<JobKind> = host.gate.isRecording ? Set(JobKind.allCases.filter(usesThisMac)) : []
             guard let job = try? database.claimNextJob(skipping: skipping) else {
                 await sleep(for: .seconds(policy.idlePoll))

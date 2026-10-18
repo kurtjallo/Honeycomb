@@ -280,7 +280,6 @@ struct PipelineJobTests {
     }
 }
 
-/// Blocks until opened, and ignores cancellation, like a model that can't be interrupted.
 actor Latch {
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []

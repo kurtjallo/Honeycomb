@@ -23,7 +23,6 @@ public struct InputDevice: Sendable, Equatable, Identifiable {
     }
 }
 
-/// A process recording from input devices right now.
 public struct InputUse: Sendable, Equatable {
     public let bundleID: String
     public let devices: [AudioDeviceID]
@@ -49,8 +48,6 @@ public enum InputDevicePicker {
         return fallback
     }
 
-    /// The input devices call apps record from. Other recorders, such as OBS on a virtual device
-    /// or Siri listening, never choose the mic.
     public static func inputsToFollow(_ uses: [InputUse], callApps: Set<String>) -> [AudioDeviceID] {
         uses.filter { use in callApps.contains { CallAppCatalog.process(use.bundleID, belongsTo: $0) } }
             .flatMap(\.devices)
@@ -81,12 +78,10 @@ public enum InputDevices {
         CA.defaultDevice(kAudioHardwarePropertyDefaultInputDevice)
     }
 
-    /// Input devices that call apps are recording from right now.
     public static func inputsInUse(of bundleIDs: Set<String>) -> [AudioDeviceID] {
         InputDevicePicker.inputsToFollow(uses(), callApps: bundleIDs)
     }
 
-    /// Other processes recording right now.
     public static func uses() -> [InputUse] {
         let own = ProcessInfo.processInfo.processIdentifier
         return CA.processObjects.compactMap { process in

@@ -17,7 +17,6 @@ extension Color {
     static let selection = Color(light: 0xFAE6B0, dark: 0x3E3215)
     static let recording = Color(light: 0xFF3B30, dark: 0xFF453A)
     static let recordingText = Color(light: 0xC42B1C, dark: 0xFF6B61)
-    /// The Stop button's fill. White on it is 5.4:1; on `recording` it would be under 3.6:1.
     static let recordingFill = Color(light: 0xD70015, dark: 0xD70015)
     static let warning = Color(light: 0xC2410C, dark: 0xFF8A4C)
     static let warningSubtle = Color(light: 0xFDEBDD, dark: 0x3D2617)
@@ -50,7 +49,6 @@ enum AppearanceChoice: String, CaseIterable, Identifiable {
         }
     }
 
-    /// `nil` follows macOS.
     var appearance: NSAppearance? {
         switch self {
         case .system: nil
@@ -60,10 +58,7 @@ enum AppearanceChoice: String, CaseIterable, Identifiable {
     }
 }
 
-/// Sets the appearance for the whole app, so windows and panels follow the setting, and System
-/// hands them back to macOS. `preferredColorScheme` can't: its views keep the old scheme after it
-/// goes back to nil. The menu bar label carries this, because it is the one view that lives from
-/// launch to quit.
+/// Not `preferredColorScheme`: its views keep the old scheme after it goes back to nil.
 private struct HoneycombAppearance: ViewModifier {
     @AppStorage(AppearanceChoice.defaultsKey) private var appearance = AppearanceChoice.system
 

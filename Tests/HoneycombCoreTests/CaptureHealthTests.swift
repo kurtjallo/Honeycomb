@@ -154,7 +154,6 @@ struct CaptureHealthTests {
         #expect(machine.finalStatus(stoppedAtMs: now + 5_100) == .recovered)
     }
 
-    /// A restart ends the old capture, and its last drained writes reach the machine after the restart.
     @Test mutating func writesDrainedBeforeARestartDoNotEndTheStartupGrace() {
         _ = machine.handle(.started(atMs: 0))
         _ = write(from: 100, to: 1_000)
@@ -178,7 +177,6 @@ struct CaptureHealthTests {
         #expect(machine.health == .lost)
     }
 
-    /// Ticks every 50 ms and answers each restart with a recorder that starts but delivers nothing.
     mutating func retryWithoutAudio(from: Int64, to: Int64) -> [CaptureCommand] {
         var commands: [CaptureCommand] = []
         var now = from

@@ -26,7 +26,6 @@ struct TrackPipelineTests {
     }
 }
 
-/// Like the real recorders, a stop tears down whatever capture is current when it gets there.
 private final class HangingStopRecorder: TrackRecorder, @unchecked Sendable {
     let channel = Channel.them
     private let lock = NSLock()

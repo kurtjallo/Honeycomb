@@ -8,7 +8,6 @@ struct MeetingDetail: View {
     @State private var title = ""
     @State private var tab = NotesTab.ai
     @State private var versions: [EnhancedNote] = []
-    /// A version picked from the menu while another one is being written.
     @State private var pinned: UUID?
 
     enum NotesTab: Hashable {
@@ -22,8 +21,6 @@ struct MeetingDetail: View {
         versions.first { $0.status == .generating && meeting.state == .writingNotes }
     }
 
-    /// The version on screen. New notes stream in place of the current ones, so edits never land
-    /// on a version about to be replaced, unless you pick another version while they're written.
     private var current: EnhancedNote? {
         guard let generating else { return versions.first { $0.id == meeting.currentEnhancedId } }
         return versions.first { $0.id == pinned } ?? generating
@@ -133,7 +130,6 @@ struct MeetingDetail: View {
             var opening = true
             do {
                 for try await versions in database.enhancedUpdates(meeting.id) {
-                    // Notes that arrive while you type in My notes wait until you switch to them.
                     if self.versions.isEmpty, !versions.isEmpty { tab = opening || !EditorHost.shared.isFocused ? .ai : .mine }
                     opening = false
                     self.versions = versions
@@ -164,7 +160,6 @@ struct NotesEditor: View {
             }
     }
 
-    /// A streaming version has only Markdown, so it gets the same AI marks the finished one will.
     private func document(_ note: EnhancedNote) -> PMNode {
         note.doc.flatMap(PMNode.decode)
             ?? Authorship.apply(to: Markdown.document(note.markdown), userNotes: (try? model.database?.userNote(meeting.id))??.markdown ?? "")

@@ -52,8 +52,6 @@ public final class MicUsageMonitor: @unchecked Sendable {
     }
 }
 
-/// Reads a browser's window titles through Accessibility, only when that browser starts using
-/// the mic, to tell a Meet call from dictation or a voice chat.
 public enum BrowserTitles {
     public static var isTrusted: Bool { AXIsProcessTrusted() }
 

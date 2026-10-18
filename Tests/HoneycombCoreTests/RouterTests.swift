@@ -250,7 +250,6 @@ struct RouterTests {
 
 final class MemorySecretStore: SecretStore {
     private let secrets = Mutex<[String: String]>([:])
-    /// Set to make every read fail, like a locked keychain.
     let readError = Mutex<(any Error)?>(nil)
 
     var accounts: [String] { secrets.withLock { Array($0.keys) } }

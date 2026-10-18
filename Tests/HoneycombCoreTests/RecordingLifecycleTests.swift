@@ -172,7 +172,6 @@ struct RecordingLifecycleTests {
         #expect(lifecycle.handle(.stopFinished) == [.quit])
     }
 
-    /// AGENTS.md: never start a recording without the user's click.
     @Test func onlyAStartClickOpensCapture() {
         var generator = SplitMix(seed: 7)
         let events: [RecordingEvent] = [

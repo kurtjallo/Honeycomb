@@ -4,7 +4,6 @@ import Testing
 @testable import HoneycombCore
 
 /// Stands in for MLX. Each model is its folder name, and every call is logged in order.
-/// After `holdLoads()`, a load is logged when it starts and returns only on `releaseLoads()`, like a slow MLX load.
 final class FakeRuntime: LLMRuntime {
     private let log = Mutex<[String]>([])
     private let held = Mutex<(holding: Bool, loads: [CheckedContinuation<Void, Never>])>((false, []))

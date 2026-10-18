@@ -25,8 +25,6 @@ public enum CallAppCatalog {
         "com.apple.WebKit.GPU": "com.apple.Safari",
     ]
 
-    /// Whether a recording process belongs to an app. Browsers and some apps record from helper
-    /// processes, such as "com.google.Chrome.helper".
     public static func process(_ bundleID: String, belongsTo appBundleID: String) -> Bool {
         let resolved = aliases[bundleID] ?? bundleID
         return resolved == appBundleID || resolved.hasPrefix(appBundleID + ".")

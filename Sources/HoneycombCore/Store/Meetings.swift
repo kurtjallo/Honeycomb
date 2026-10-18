@@ -26,7 +26,6 @@ extension AppDatabase {
         }
     }
 
-    /// Changes only the title, so a version or AI title written meanwhile isn't undone.
     public func renameMeeting(_ id: UUID, to title: String) throws {
         try writer.write { db in
             try db.execute(sql: "UPDATE meeting SET title = ?, title_source = ?, updated_at = ? WHERE id = ?",
@@ -40,8 +39,6 @@ extension AppDatabase {
         }
     }
 
-    /// A stopped recording moves on to transcription. An end time and length already stored win,
-    /// so recovery after a crash keeps what the recorder wrote.
     public func recordingStopped(_ id: UUID, endAt: Date?, durationMs: Int64?) throws {
         try writer.write { db in
             try db.execute(sql: """

@@ -25,7 +25,6 @@ public enum Markdown {
             blocks += lists(listLines, level: listLines.map(\.level).min() ?? 0, index: &index, newBlockID: newBlockID)
             listLines = []
         }
-        // The editor has no code block, so each line of a fence becomes a code line in one paragraph.
         func flushCode() {
             guard let lines = code else { return }
             code = nil
@@ -78,7 +77,6 @@ public enum Markdown {
                 continue
             }
             flushList()
-            // The editor has no table, so a table stays as text with one row per line.
             let isRow = trimmed.hasPrefix("|")
             if let last = paragraph.last, last.hasPrefix("|") != isRow { flushParagraph() }
             paragraph.append((trimmed.hasPrefix(">") ? String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces) : trimmed)
@@ -90,7 +88,6 @@ public enum Markdown {
         return .doc(blocks.isEmpty ? [PMNode(type: "paragraph", attrs: ["blockId": .string(newBlockID())])] : blocks)
     }
 
-    /// Joins a wrapped line onto a block's text. "\n" marks a hard break: a line ending in two spaces.
     static func joinLine(_ text: String, _ line: String) -> String {
         text.isEmpty || text.hasSuffix("\n") ? text + line : text + " " + line
     }
@@ -108,7 +105,6 @@ public enum Markdown {
         var text: String
         var laterParagraphs: [String] = []
 
-        /// An indented line after a blank line starts another paragraph in the item.
         mutating func addLine(_ line: String, startsParagraph: Bool) {
             if startsParagraph {
                 laterParagraphs.append(line)

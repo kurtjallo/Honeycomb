@@ -14,7 +14,6 @@ struct DetectionTests {
         return commands
     }
 
-    /// Answers every title read with `titles` right away, as the app does.
     mutating func ticks(_ from: Int64, _ to: Int64, answering titles: [String]) -> [DetectionCommand] {
         var commands: [DetectionCommand] = []
         var now = from

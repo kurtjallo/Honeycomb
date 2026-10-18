@@ -104,10 +104,6 @@ public actor LocalLLM<Runtime: LLMRuntime> {
 
     /// A model being replaced stays loaded until ModelHost evicts it, which waits for its last lease
     /// and then calls `forceUnload`. Callers that arrive meanwhile join the same load task.
-    ///
-    /// Making room can wait minutes for the old model's last user, and a load takes seconds. The caller
-    /// may be cancelled, or a recording may start, in either wait, so both are checked again before
-    /// and after the load. A cancelled caller cancels the load it started.
     private func model(_ id: String) async throws -> Runtime.Model {
         if let loaded, loaded.id == id { return loaded.model }
         if let loading, loading.id == id { return try await loading.task.value }

@@ -135,7 +135,6 @@ struct MeetingRecorderTests {
     }
 }
 
-/// Replays audio, and blocks in `stop()` until opened, like a device that is slow to let go.
 final class GatedRecorder: TrackRecorder, Sendable {
     let channel: Channel
     private let replay: ReplayRecorder

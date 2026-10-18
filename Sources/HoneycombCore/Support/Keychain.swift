@@ -4,8 +4,7 @@ import Security
 /// Where provider API keys are kept. Tests use an in-memory fake, so they never touch the login keychain.
 public protocol SecretStore: Sendable {
     func set(_ secret: String, account: String) throws
-    /// Nil only when no key is stored. A keychain that can't be read throws, so a request never
-    /// goes out without its key and comes back as "key rejected".
+    /// Nil only when no key is stored. A keychain that can't be read throws.
     func read(account: String) throws -> String?
     func delete(account: String)
 }

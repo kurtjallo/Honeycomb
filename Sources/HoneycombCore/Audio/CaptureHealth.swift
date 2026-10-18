@@ -62,10 +62,7 @@ public struct CaptureHealthMachine: Sendable {
     private var silenceSinceMs: Int64?
     private var silenceWarned = false
     private var pausedAtMs: Int64?
-    /// The session drains the old capture before a start or restart and handles those writes after it,
-    /// so a write stamped at or before this time came from the capture that was torn down.
     private var staleBeforeMs: Int64?
-    /// Set when `captureLost` goes out, cleared once the track is running again.
     private var lossReported = false
 
     public init(policy: CapturePolicy = .standard) {
@@ -103,7 +100,6 @@ public struct CaptureHealthMachine: Sendable {
 
         case .routeChanged(let now):
             switch phase {
-            // No audio has arrived while starting, so the startup grace already restarts a dead recorder.
             case .idle, .paused, .starting, .restarting, .waitingToRestart:
                 return []
             case .running, .debouncingRoute:

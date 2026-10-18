@@ -21,8 +21,6 @@ public actor MeetingRecorder {
     private let host: ModelHost?
     private var phase = Phase.idle
     private var live: Task<Void, Never>?
-    /// The meeting whose live transcriber holds the speech models. A stop waits only for that one,
-    /// never for a model that is still loading.
     private var liveMeeting: UUID?
 
     private enum Phase {
@@ -134,7 +132,6 @@ public actor MeetingRecorder {
         }
     }
 
-    /// False once the recording has stopped, so a model that finished loading late writes nothing.
     private func liveReady(_ meeting: UUID) -> Bool {
         guard case .recording(let id, _) = phase, id == meeting else { return false }
         liveMeeting = meeting
@@ -153,8 +150,7 @@ public actor MeetingRecorder {
         try? database.setState(id, .recording)
     }
 
-    /// Stops capture and hands the meeting to the pipeline as `transcribing`. A stop called while
-    /// another runs waits for it and returns the same meeting.
+    /// A stop called while another runs waits for it and returns the same meeting.
     @discardableResult
     public func stop() async -> UUID? {
         switch phase {

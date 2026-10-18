@@ -67,8 +67,6 @@ public struct NoteWriter: Sendable {
                 lastWrite = .now
             }
             let output = NotesPrompt.parseOutput(raw, sections: input.template.sections)
-            // A reasoning model can spend its whole budget thinking. An answer with no notes must
-            // never replace the notes the meeting already has.
             if output.body.isEmpty { throw ProviderError.truncated }
             let doc = Authorship.apply(to: Markdown.document(output.body), userNotes: input.userNotes)
             note.doc = doc.encoded()
@@ -114,7 +112,6 @@ public struct NoteWriter: Sendable {
                 var summary = ""
                 let finish = try await read(request, from: resolved.provider, for: meeting) { summary += $0 }
                 summary = NotesPrompt.answer(summary)
-                // A summary cut off at its length limit still covers most of its part, unless it has no text at all.
                 if finish == .length, summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw ProviderError.truncated }
                 summaries.append(summary)
             }

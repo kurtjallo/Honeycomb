@@ -86,7 +86,6 @@ struct RecordingSessionTests {
         #expect(meta.status == .recovered)
     }
 
-    /// Dictionary order decides which track resumes first, so the failure is keyed on the overall start count.
     @Test func failedResumeLeavesBothTracksPaused() async throws {
         let starts = CountedStarts(failing: 4)
         let session = RecordingSession(meetingID: UUID(), folder: folder, recorders: [
@@ -115,7 +114,6 @@ struct RecordingSessionTests {
     }
 }
 
-/// Shared by both tracks' recorders so a test can fail one start regardless of track order.
 private final class CountedStarts: @unchecked Sendable {
     private let lock = NSLock()
     private let failing: Int
@@ -141,7 +139,6 @@ private final class CountedStarts: @unchecked Sendable {
     }
 }
 
-/// Delivers no audio. Like the real recorders, a stop tears down only the latest capture.
 private final class CountedRecorder: TrackRecorder, @unchecked Sendable {
     let channel: Channel
     private let starts: CountedStarts

@@ -373,7 +373,6 @@ private struct StreamChat: ChatProvider {
     @Test("no first token within the policy's budget throws .timedOut")
     func firstTokenTimeout() async {
         let server = StubServer(.init(headers: eventStream, closes: false))
-        // The stub answers at once, so a full second to connect can't run out first, even under load.
         var policy = ProviderPolicy(firstToken: .seconds(2))
         policy.connect = .seconds(1)
         let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: true, session: server.session, policy: policy)
@@ -649,7 +648,6 @@ struct StubServer {
     }
 }
 
-/// URLProtocol predates Sendable. The stub sends a reply's later pieces in order from one task.
 private struct Unchecked<Value>: @unchecked Sendable {
     let value: Value
 }
@@ -660,7 +658,6 @@ final class Stub: URLProtocol {
         var status = 200
         var headers: [String: String] = [:]
         var body = Data()
-        /// Sent one at a time after `body`, `interval` apart, before the reply closes.
         var later: [Data] = []
         var interval: Duration = .milliseconds(100)
         var closes = true

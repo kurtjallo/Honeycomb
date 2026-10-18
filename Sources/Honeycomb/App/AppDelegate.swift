@@ -9,8 +9,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.launch()
     }
 
-    /// The recording lifecycle decides whether to ask first, stops any recording and the pipeline,
-    /// then replies.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         model.quitRequested()
         return .terminateLater
