@@ -91,24 +91,19 @@ public enum DictionaryCorrector {
         text.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    /// Close spelling, or a looser spelling that sounds the same ("leigh" and "lee").
+    /// Close spelling, before or after common spelling swaps ("leigh" and "lee"). Vowels still
+    /// count, so a common word never becomes a short name that shares its consonants ("been", "Ben").
     static func matches(_ candidate: String, _ target: String, minSimilarity: Double) -> Bool {
-        let score = similarity(candidate, target)
-        return score >= minSimilarity || (score >= 0.6 && soundKey(candidate) == soundKey(target))
+        similarity(candidate, target) >= minSimilarity
+            || similarity(soundSpelling(candidate), soundSpelling(target)) >= minSimilarity
     }
 
-    /// A rough sound-alike key: common spelling swaps, then the consonants.
-    static func soundKey(_ word: String) -> String {
+    static func soundSpelling(_ word: String) -> String {
         var text = word
         for (from, to) in [("gh", ""), ("ph", "f"), ("ck", "k"), ("q", "k"), ("x", "ks"), ("z", "s")] {
             text = text.replacingOccurrences(of: from, with: to)
         }
-        var key = ""
-        for (index, character) in text.enumerated() {
-            if index > 0, "aeiouyhw".contains(character) { continue }
-            if key.last != character { key.append(character) }
-        }
-        return key
+        return text
     }
 
     static func splitPunctuation(_ text: String) -> (String, String) {
