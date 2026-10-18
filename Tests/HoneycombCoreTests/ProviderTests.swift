@@ -313,6 +313,7 @@ private struct StreamChat: ChatProvider {
 
     @Test("models() decodes the list and names /v1 once", arguments: [
         ("", "/v1/models"), ("/v1", "/v1/models"), ("/v1/", "/v1/models"), ("/api/v1", "/api/v1/models"),
+        ("/v1/chat/completions", "/v1/models"), ("/api/v1/chat/completions/", "/api/v1/models"),
     ])
     func models(basePath: String, expectedPath: String) async throws {
         let server = StubServer(.init(body: Data(
@@ -544,7 +545,7 @@ private struct StreamChat: ChatProvider {
         #expect(outcome.error == .rateLimited(retryAfter: nil))
     }
 
-    @Test("models() decodes the list, names /v1 once, and asks for every model in one page", arguments: ["", "/v1"])
+    @Test("models() decodes the list, names /v1 once, and asks for every model in one page", arguments: ["", "/v1", "/v1/messages"])
     func models(basePath: String) async throws {
         let server = StubServer(.init(body: Data(
             #"{"data":[{"type":"model","id":"claude-sonnet-4-5","display_name":"Claude Sonnet 4.5"}],"has_more":false}"#.utf8)))
