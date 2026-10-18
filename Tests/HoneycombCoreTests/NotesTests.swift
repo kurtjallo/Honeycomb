@@ -119,6 +119,16 @@ struct MarkdownTests {
         #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
     }
 
+    @Test func aFenceThatNeverClosesIsText() {
+        let stray = Markdown.document("## Summary\n\n- a\n\n```\n## Next steps\n\n- [ ] b", newBlockID: ids())
+        #expect(stray.content?.map(\.type) == ["heading", "bulletList", "paragraph", "heading", "taskList"])
+        #expect(stray.content?[2].plainText == "```")
+
+        let inlineCode = Markdown.document("```make test``` runs the suite.\n\n```sh\nmake\n```", newBlockID: ids())
+        #expect(inlineCode.content?.count == 2)
+        #expect(inlineCode.content?.last?.content == [.text("make", marks: [.code])])
+    }
+
     @Test func aTableKeepsEachRowOnItsOwnLine() {
         let table = "| Owner | Task |\n|---|---|\n| Dana | Deck |"
         #expect(Markdown.document("Owners:\n" + table).plainText == "Owners:\n" + table)
