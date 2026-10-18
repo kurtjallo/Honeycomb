@@ -22,8 +22,9 @@ final class AppModel {
     private(set) var modelStates: [String: ModelStore.State] = [:]
     private(set) var providers: [ProviderRecord] = []
     private(set) var routes: [AITask: Route] = [:]
-    /// The "Ask once" AI choice, shown at launch until a notes route is stored.
+    /// The "Ask once" AI choice, shown at one launch only. After that the "Choose…" banner opens it.
     var showAIChoice = false
+    private static let aiChoiceAskedKey = "honeycomb.aiChoiceAsked"
 
     let paths = Paths.standard
     private(set) var store: ModelStore?
@@ -67,7 +68,7 @@ final class AppModel {
             try database.seedBuiltIns()
             templates = (try? database.templates()) ?? BuiltInTemplates.all
             reloadAISetup()
-            showAIChoice = routes[.enhance] == nil
+            showAIChoice = routes[.enhance] == nil && !UserDefaults.standard.bool(forKey: Self.aiChoiceAskedKey)
             Task {
                 await pipeline.setHandlers(handlers)
                 await pipeline.start()
@@ -127,6 +128,10 @@ final class AppModel {
     /// The built-in model notes need, or nil when notes use another provider.
     var notesBuiltInModel: String? {
         routes[.enhance].flatMap { $0.providerId == ProviderRecord.builtIn.id ? $0.model : nil }
+    }
+
+    func aiChoiceClosed() {
+        UserDefaults.standard.set(true, forKey: Self.aiChoiceAskedKey)
     }
 
     func useBuiltInAI() {
