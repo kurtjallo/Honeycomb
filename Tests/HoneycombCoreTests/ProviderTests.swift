@@ -373,8 +373,9 @@ private struct StreamChat: ChatProvider {
     @Test("no first token within the policy's budget throws .timedOut")
     func firstTokenTimeout() async {
         let server = StubServer(.init(headers: eventStream, closes: false))
-        var policy = ProviderPolicy(firstToken: .milliseconds(500))
-        policy.connect = .milliseconds(100)
+        // The stub answers at once, so a full second to connect can't run out first, even under load.
+        var policy = ProviderPolicy(firstToken: .seconds(2))
+        policy.connect = .seconds(1)
         let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: true, session: server.session, policy: policy)
         let start = ContinuousClock.now
 
@@ -382,8 +383,8 @@ private struct StreamChat: ChatProvider {
 
         let elapsed = ContinuousClock.now - start
         #expect(outcome.error == .timedOut)
-        #expect(elapsed >= .milliseconds(500), "headers arrived, so the first-token budget applies, not the connect budget")
-        #expect(elapsed < .seconds(10), "the 500 ms budget applies, not the 120 s local default")
+        #expect(elapsed >= .seconds(2), "headers arrived, so the first-token budget applies, not the connect budget")
+        #expect(elapsed < .seconds(10), "the 2 s budget applies, not the 120 s local default")
         #expect(server.requests.count == 1, "a timeout has used its whole budget, so it is not retried")
     }
 
@@ -425,14 +426,15 @@ private struct StreamChat: ChatProvider {
     func commentsKeepTheAttemptAlive() async {
         let keepAlive = Data(": OPENROUTER PROCESSING\n\n".utf8)
         let server = StubServer(.init(headers: eventStream, later: Array(repeating: keepAlive, count: 8)
-            + [sse(content("Notes"), #"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#, "[DONE]")]))
-        var policy = ProviderPolicy(firstToken: .milliseconds(400))
-        policy.silence = .milliseconds(400)
+            + [sse(content("Notes"), #"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#, "[DONE]")],
+            interval: .milliseconds(250)))
+        var policy = ProviderPolicy(firstToken: .seconds(1))
+        policy.silence = .seconds(1)
         let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: false, session: server.session, policy: policy)
 
         let outcome = await Outcome(provider.stream(chat))
 
-        #expect(outcome.error == nil, "900 ms of comments 100 ms apart outlast a 400 ms budget only if each one counts")
+        #expect(outcome.error == nil, "2.25 s of comments 250 ms apart outlast a 1 s budget only if each one counts")
         #expect(outcome.deltas == [.text("Notes"), .finished(.stop)])
     }
 
