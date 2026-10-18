@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import HoneycombCore
 
@@ -68,6 +69,42 @@ struct LineBuilderTests {
             .init(token: $0.0, tokenId: 0, startTime: $0.1, endTime: $0.2, confidence: 1)
         })
         #expect(words == [TimedWord("We'd", 0, 200), TimedWord("renew", 300, 500)])
+    }
+}
+
+struct FinalTranscriberTests {
+    struct FixedRanges: SpeechRangeDetector {
+        let ranges: [(startMs: Int64, endMs: Int64)]
+        func speechRanges(_ samples: [Float]) async throws -> [(startMs: Int64, endMs: Int64)] { ranges }
+    }
+
+    actor CancellingEngine: TranscriptionEngine {
+        nonisolated let engineID = "fake"
+        private(set) var calls = 0
+        func prepare() async throws {}
+        func release() async {}
+        func transcribe(_ samples: [Float]) async throws -> TranscriptPiece {
+            calls += 1
+            withUnsafeCurrentTask { $0?.cancel() }
+            return TranscriptPiece(text: "hello there", words: [])
+        }
+    }
+
+    @Test func cancellingStopsWithinOneSpeechRange() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let writer = try AACSegmentWriter(url: folder.appendingPathComponent("me-0.aac"))
+        var samples = [Float](repeating: 0, count: 48_000)
+        try samples.withUnsafeMutableBufferPointer { try writer.write($0.baseAddress!, count: $0.count) }
+        writer.close()
+        var meta = SessionMeta(meetingID: UUID(), startedAt: Date())
+        meta[.me].segments = [SegmentMeta(file: "me-0.aac", startOffsetMs: 0, frames: writer.frames,
+                                          sampleRate: 16_000, primingFrames: writer.primingFrames)]
+        let engine = CancellingEngine()
+        let detector = FixedRanges(ranges: [(0, 1_000), (1_000, 2_000), (2_000, 3_000)])
+        let pass = Task { try await FinalTranscriber(engine: engine, detector: detector).transcribe(meta: meta, folder: folder) }
+        await #expect(throws: CancellationError.self) { try await pass.value }
+        #expect(await engine.calls == 1)
     }
 }
 
