@@ -11,6 +11,7 @@ public enum Markdown {
         var blocks: [PMNode] = []
         var paragraph: [String] = []
         var listLines: [ListLine] = []
+        var code: [String]?
 
         func flushParagraph() {
             guard !paragraph.isEmpty else { return }
@@ -23,12 +24,31 @@ public enum Markdown {
             blocks += lists(listLines, level: listLines.map(\.level).min() ?? 0, index: &index, newBlockID: newBlockID)
             listLines = []
         }
+        // The editor has no code block, so each line of a fence becomes a code line in one paragraph.
+        func flushCode() {
+            guard let lines = code else { return }
+            code = nil
+            let content = lines.enumerated().flatMap { offset, line in
+                (offset == 0 ? [] : [PMNode(type: "hardBreak")]) + (line.isEmpty ? [] : [PMNode.text(line, marks: [.code])])
+            }
+            if !content.isEmpty { blocks.append(block("paragraph", content, newBlockID())) }
+        }
 
         for rawLine in markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
             let line = rawLine.replacingOccurrences(of: "\t", with: "    ")
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             let lineEnd = line.hasSuffix("  ") ? "\n" : ""
-            if trimmed.isEmpty || trimmed.hasPrefix("```") || isRule(trimmed) {
+            if code != nil {
+                if trimmed.hasPrefix("```") { flushCode() } else { code?.append(line) }
+                continue
+            }
+            if trimmed.hasPrefix("```") {
+                flushParagraph()
+                flushList()
+                code = []
+                continue
+            }
+            if trimmed.isEmpty || isRule(trimmed) {
                 flushParagraph()
                 if trimmed.isEmpty && !listLines.isEmpty { continue }
                 flushList()
@@ -52,10 +72,15 @@ public enum Markdown {
                 continue
             }
             flushList()
-            paragraph.append((trimmed.hasPrefix(">") ? String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces) : trimmed) + lineEnd)
+            // The editor has no table, so a table stays as text with one row per line.
+            let isRow = trimmed.hasPrefix("|")
+            if let last = paragraph.last, last.hasPrefix("|") != isRow { flushParagraph() }
+            paragraph.append((trimmed.hasPrefix(">") ? String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces) : trimmed)
+                             + (isRow ? "\n" : lineEnd))
         }
         flushParagraph()
         flushList()
+        flushCode()
         return .doc(blocks.isEmpty ? [PMNode(type: "paragraph", attrs: ["blockId": .string(newBlockID())])] : blocks)
     }
 
