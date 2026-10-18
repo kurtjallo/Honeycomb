@@ -36,15 +36,16 @@ public enum Markdown {
             if !content.isEmpty { blocks.append(block("paragraph", content, newBlockID())) }
         }
 
-        for rawLine in markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+        let rawLines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        for (index, rawLine) in rawLines.enumerated() {
             let line = rawLine.replacingOccurrences(of: "\t", with: "    ")
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             let lineEnd = line.hasSuffix("  ") ? "\n" : ""
             if code != nil {
-                if trimmed.hasPrefix("```") { flushCode() } else { code?.append(line) }
+                if closesFence(trimmed) { flushCode() } else { code?.append(line) }
                 continue
             }
-            if trimmed.hasPrefix("```") {
+            if opensFence(trimmed), rawLines[(index + 1)...].contains(where: closesFence) {
                 flushParagraph()
                 flushList()
                 code = []
@@ -88,6 +89,17 @@ public enum Markdown {
         flushList()
         flushCode()
         return .doc(blocks.isEmpty ? [PMNode(type: "paragraph", attrs: ["blockId": .string(newBlockID())])] : blocks)
+    }
+
+    /// A fence opens only if a later line closes it, so a stray or cut-off fence stays text instead
+    /// of turning the rest of the note into code. Backticks after the opening ones make it inline
+    /// code, as in CommonMark.
+    static func opensFence(_ line: String) -> Bool {
+        line.hasPrefix("```") && !line.dropFirst(3).contains("`")
+    }
+
+    static func closesFence(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces).hasPrefix("```")
     }
 
     static func joinLine(_ text: String, _ line: String) -> String {
