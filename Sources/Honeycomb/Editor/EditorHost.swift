@@ -114,8 +114,17 @@ final class EditorHost: NSObject {
     }
 
     /// Once the page shows a load, it reports no more edits for older ones, so their closures go.
+    /// A rejected load must not leave the previous note on screen, so a read-only notice replaces it.
     private func loadReplied(_ id: Int, ok: Bool) {
-        if ok { saves = saves.filter { $0.key >= id } }
+        if ok {
+            saves = saves.filter { $0.key >= id }
+            return
+        }
+        Log.error("editor.load_rejected")
+        saves[id] = nil
+        if id == loadID {
+            load(Markdown.document("These notes can't be shown."), editable: false, placeholder: "", onChange: nil)
+        }
     }
 
     static func object(_ doc: PMNode) -> Any? {
