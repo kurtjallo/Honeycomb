@@ -77,6 +77,54 @@ struct PipelineJobTests {
         await pipeline.stop()
     }
 
+    func routeNotes(to baseURL: String) throws {
+        try database.saveProvider(ProviderRecord(id: "server", name: "Server", kind: .openAICompatible, baseUrl: baseURL,
+                                                 contextTokens: 32_000, isLocal: false))
+        try database.saveRoute(Route(task: .enhance, providerId: "server", model: "m"))
+    }
+
+    @Test(arguments: [("https://api.openai.com/v1", false), ("http://192.168.1.20:11434/v1", false),
+                      ("http://localhost:11434/v1", true), ("http://127.0.0.1:1234/v1", true), ("http://[::1]:11434/v1", true)])
+    func aRecordingStopsNotesOnlyWhenTheyRunOnThisMac(baseURL: String, onThisMac: Bool) async throws {
+        try routeNotes(to: baseURL)
+        let calls = CallCounter()
+        let release = AsyncStream<Void>.makeStream()
+        await handle { _ in
+            await calls.add()
+            for await _ in release.stream { break }
+            try Task.checkCancellation()
+            return .written(UUID())
+        }
+        await pipeline.start()
+        await pipeline.enqueue(.enhance, meeting: meeting.id)
+        #expect(await eventually { await calls.count == 1 })
+
+        host.gate.set(true)
+        await pipeline.recordingStarted()
+        release.continuation.yield()
+        if onThisMac {
+            #expect(try await eventually { try enhanceJob()?.status == .queued }, "the notes wait for the recording")
+        } else {
+            #expect(try await eventually { try enhanceJob()?.status == .done }, "the notes finish during the recording")
+            #expect(try database.meeting(meeting.id)?.state == .indexing)
+        }
+        await pipeline.stop()
+    }
+
+    @Test func notesOnAnotherMachineStartDuringARecording() async throws {
+        try routeNotes(to: "https://api.openai.com/v1")
+        let calls = CallCounter()
+        await handle { _ in
+            await calls.add()
+            return .written(UUID())
+        }
+        host.gate.set(true)
+        await pipeline.start()
+        await pipeline.enqueue(.enhance, meeting: meeting.id)
+        #expect(await eventually { await calls.count == 1 })
+        await pipeline.stop()
+    }
+
     @Test func aFailedJobRetriesAfterThePolicyDelay() async throws {
         let calls = CallCounter()
         await handle { _ in
