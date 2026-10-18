@@ -340,6 +340,26 @@ struct NoteWriterTests {
         #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
     }
 
+    @Test func anAnswerCutOffWhileStillReasoningFailsAndKeepsTheEarlierNotes() async throws {
+        guard case .written(let good) = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) else {
+            Issue.record("not written")
+            return
+        }
+        await #expect(throws: ProviderError.truncated) {
+            _ = try await writer(FakeChat(chunks: ["Okay, let me look at the transcript. The customer said"], finish: .length))
+                .write(meeting.id)
+        }
+        #expect(try database.meeting(meeting.id)?.currentEnhancedId == good)
+        #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
+    }
+
+    @Test func notesCutOffAfterTheirFirstSectionAreKept() async throws {
+        _ = try await writer(FakeChat(chunks: ["## Summary\n\n- Acme renews if SSO ships"], finish: .length)).write(meeting.id)
+        let note = try #require(try database.enhancedNotes(meeting.id).first)
+        #expect(note.status == .done)
+        #expect(note.errorCode == "truncated")
+    }
+
     @Test func anEmptyAnswerFails() async throws {
         await #expect(throws: ProviderError.truncated) { _ = try await writer(FakeChat(chunks: [])).write(meeting.id) }
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
