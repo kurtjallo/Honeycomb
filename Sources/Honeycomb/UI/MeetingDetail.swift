@@ -130,11 +130,13 @@ struct MeetingDetail: View {
         .onChange(of: generating?.id) { pinned = nil }
         .task(id: meeting.id) {
             guard let database = model.database else { return }
+            var opening = true
             do {
                 for try await versions in database.enhancedUpdates(meeting.id) {
-                    let hadNotes = !self.versions.isEmpty
+                    // Notes that arrive while you type in My notes wait until you switch to them.
+                    if self.versions.isEmpty, !versions.isEmpty { tab = opening || !EditorHost.shared.isFocused ? .ai : .mine }
+                    opening = false
                     self.versions = versions
-                    if !hadNotes, !versions.isEmpty { tab = .ai }
                 }
             } catch {}
         }

@@ -77,6 +77,10 @@ final class EditorHost: NSObject {
         send("setTheme", ["appearance": dark ? "dark" : "light", "fontSize": fontSize, "underlineAI": underlineAI])
     }
 
+    var isFocused: Bool {
+        (webView.window?.firstResponder as? NSView)?.isDescendant(of: webView) == true
+    }
+
     func focus() {
         send("focus", [:])
     }
