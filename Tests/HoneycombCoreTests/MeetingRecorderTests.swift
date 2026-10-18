@@ -13,12 +13,22 @@ struct MeetingRecorderTests {
         try paths.createFolders()
     }
 
-    func recorder(free: Int64 = .max, mic: Bool = true, them: @escaping @Sendable () -> any TrackRecorder = {
-        ReplayRecorder(channel: .them, generate: { _ in 0.1 })
-    }) -> MeetingRecorder {
+    func recorder(free: Int64 = .max, mic: @escaping @Sendable () async -> Bool = { true },
+                  them: @escaping @Sendable () -> any TrackRecorder = { ReplayRecorder(channel: .them, generate: { _ in 0.1 }) })
+        -> MeetingRecorder {
         MeetingRecorder(database: database, paths: paths, makeRecorders: {
             [ReplayRecorder(channel: .me, generate: { _ in 0.1 }), them()]
-        }, freeBytes: { free }, micAccess: { mic })
+        }, freeBytes: { free }, micAccess: mic)
+    }
+
+    static func failingSystemAudio() -> any TrackRecorder {
+        let them = ReplayRecorder(channel: .them, generate: { _ in 0.1 })
+        them.failingStarts = 1
+        return them
+    }
+
+    func audioFolders() throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: paths.audio.path)
     }
 
     func eventually(_ check: () -> Bool) async -> Bool {
@@ -69,6 +79,41 @@ struct MeetingRecorderTests {
         #expect(try database.meetings(in: MeetingState.allCases).map(\.id) == [id])
     }
 
+    @Test func aFailedStartLeavesNoMeeting() async throws {
+        let recorder = recorder(them: Self.failingSystemAudio)
+        await #expect(throws: RecordingError.captureFailed) { _ = try await recorder.start() }
+        #expect(try database.meetings(in: MeetingState.allCases).isEmpty)
+        #expect(try audioFolders().isEmpty)
+    }
+
+    @Test func aFailedStartPutsTheDraftBack() async throws {
+        let draft = Meeting(title: "Acme renewal", titleSource: .user, state: .draft)
+        try database.insert(draft)
+        let recorder = recorder(them: Self.failingSystemAudio)
+        await #expect(throws: RecordingError.captureFailed) { _ = try await recorder.start(existing: draft.id) }
+        let row = try #require(try database.meeting(draft.id))
+        #expect(row.state == .draft)
+        #expect(row.audioDir == nil)
+        #expect(row.startAt == nil)
+        #expect(try audioFolders().isEmpty)
+    }
+
+    @Test func aCancelledStartLeavesNoMeeting() async throws {
+        let permission = Latch()
+        let recorder = recorder(mic: {
+            await permission.wait()
+            return true
+        })
+        let start = Task { try await recorder.start() }
+        start.cancel()
+        await permission.open()
+        await #expect(throws: CancellationError.self) { _ = try await start.value }
+        #expect(try database.meetings(in: MeetingState.allCases).isEmpty)
+        #expect(try audioFolders().isEmpty)
+        _ = try await recorder.start()
+        await recorder.stop()
+    }
+
     @Test func draftNoteKeepsItsRow() async throws {
         let draft = Meeting(title: "Acme renewal", titleSource: .user, state: .draft)
         try database.insert(draft)
@@ -86,7 +131,7 @@ struct MeetingRecorderTests {
     }
 
     @Test func micDeniedBlocksRecording() async throws {
-        await #expect(throws: RecordingError.micDenied) { _ = try await recorder(mic: false).start() }
+        await #expect(throws: RecordingError.micDenied) { _ = try await recorder(mic: { false }).start() }
     }
 }
 
