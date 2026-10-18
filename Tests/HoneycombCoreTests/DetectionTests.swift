@@ -45,6 +45,11 @@ struct DetectionTests {
         #expect(prompts.map(\.kind) == [.site("Google Meet")])
     }
 
+    @Test mutating func safariRecordsFromWebKitsGPUProcess() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.apple.WebKit.GPU", atMs: 0))
+        #expect(ticks(0, 3_000) == [.readTitle(key: "1", bundleID: "com.apple.Safari")])
+    }
+
     @Test mutating func chatGPTVoiceInABrowserIsQuiet() {
         _ = machine.handle(.micStarted(key: "1", bundleID: "company.thebrowser.Browser", atMs: 0))
         _ = ticks(0, 3_000)
