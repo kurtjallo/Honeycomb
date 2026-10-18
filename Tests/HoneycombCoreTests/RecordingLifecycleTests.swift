@@ -189,6 +189,20 @@ struct RecordingLifecycleTests {
         }
     }
 
+    @Test func aQuitEndsWhateverStillHangs() {
+        let meeting = UUID()
+        let hangs: [[RecordingEvent]] = [
+            [.start(.newMeeting), .quitConfirmed],
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .quitConfirmed],
+            [.quitRequested],
+        ]
+        for events in hangs {
+            var lifecycle = RecordingLifecycle()
+            for event in events { _ = lifecycle.handle(event) }
+            #expect(!lifecycle.handle(.tick(atMs: 600_000)).isEmpty, "the app exits even though \(events) never finished")
+        }
+    }
+
     @Test func onlyAStartClickOpensCapture() {
         var generator = SplitMix(seed: 7)
         let events: [RecordingEvent] = [
