@@ -112,7 +112,7 @@ public struct NoteWriter: Sendable {
                 var summary = ""
                 // A summary cut off at its length limit still covers most of its part.
                 _ = try await read(request, from: resolved.provider, for: meeting) { summary += $0 }
-                summaries.append(summary)
+                summaries.append(NotesPrompt.answer(summary))
             }
             text = summaries.joined(separator: "\n")
             rounds += 1

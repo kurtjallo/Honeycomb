@@ -104,10 +104,17 @@ public enum NotesPrompt {
     Start each bullet with the [mm:ss] time it came from. Use only what the transcript says. Output only the bullets.
     """
 
+    /// A chat template can open the reasoning in the prompt, so the stream starts mid-thought and
+    /// only `</think>` arrives. Everything before a `</think>` with no `<think>` before it is reasoning.
+    public static func answer(_ text: String) -> String {
+        guard let close = text.range(of: "</think>"), !text[..<close.lowerBound].contains("<think>") else { return text }
+        return String(text[close.upperBound...])
+    }
+
     /// Splits the model's output into the title line and the notes body. A first line that names
     /// one of the template's sections is a heading the model wrote at the wrong level, not a title.
     public static func parseOutput(_ text: String, sections: [String]) -> (title: String?, body: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = answer(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("# ") else { return (nil, trimmed) }
         let firstLine = trimmed.prefix { $0 != "\n" }
         let title = firstLine.dropFirst(2).trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "*"))
