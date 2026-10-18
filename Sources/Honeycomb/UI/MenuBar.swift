@@ -3,15 +3,16 @@ import SwiftUI
 
 struct MenuBarLabel: View {
     let model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Image(systemName: model.isRecording ? "hexagon.fill" : "hexagon")
+            .onAppear { model.openWindow = openWindow }
     }
 }
 
 struct MenuBarContent: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Button(model.isStartingRecording ? "Starting…" : model.isStoppingRecording ? "Stopping…"
@@ -25,10 +26,7 @@ struct MenuBarContent: View {
             }
         }
         Divider()
-        Button("Open Honeycomb") {
-            openWindow(id: "main")
-            model.showMainWindow()
-        }
+        Button("Open Honeycomb") { model.showMainWindow() }
         SettingsLink { Text("Settings…") }
         Divider()
         Button("Quit Honeycomb") { NSApp.terminate(nil) }

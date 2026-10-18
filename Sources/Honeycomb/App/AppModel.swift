@@ -328,6 +328,7 @@ final class AppModel {
             NSApp.reply(toApplicationShouldTerminate: false)
         case .alert(let error):
             alert = AppAlert(error)
+            showMainWindow()
         }
     }
 
@@ -473,10 +474,16 @@ final class AppModel {
         selection = meeting.id
     }
 
+    /// SwiftUI's action that creates the main window, for when it was never opened this launch.
+    /// The menu bar label sets it, because it is the one view that exists from launch to quit.
+    @ObservationIgnored var openWindow: OpenWindowAction?
+
     func showMainWindow() {
         NSApp.activate()
         if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
             window.makeKeyAndOrderFront(nil)
+        } else {
+            openWindow?(id: "main")
         }
     }
 
