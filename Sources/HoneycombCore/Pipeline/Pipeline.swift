@@ -88,10 +88,29 @@ public actor Pipeline {
         wake = nil
     }
 
-    /// A new recording takes priority: model work in progress stops and goes back in the queue.
+    /// A new recording takes priority: model work in progress on this Mac stops and goes back in the queue.
     public func recordingStarted() {
-        guard let current, current.job.kind != .finalizeAudio else { return }
+        guard let current, usesThisMac(current.job.kind) else { return }
         current.task.cancel()
+    }
+
+    /// Jobs that load a model on this Mac wait while a call is recorded. Notes count when they run
+    /// on the built-in model or on a server on this Mac, such as Ollama on localhost.
+    private func usesThisMac(_ kind: JobKind) -> Bool {
+        switch kind {
+        case .finalizeAudio, .mirrorMarkdown: false
+        case .transcribeFinal, .index, .sourceLink: true
+        case .enhance:
+            (try? database.route(.enhance)).flatMap { try? database.provider($0.providerId) }.map(Self.runsOnThisMac) ?? true
+        }
+    }
+
+    static func runsOnThisMac(_ provider: ProviderRecord) -> Bool {
+        if provider.kind == .builtin { return true }
+        guard let host = provider.baseUrl.flatMap(URL.init(string:))?.host(percentEncoded: false) else { return false }
+        if host == "localhost" || host == "::1" { return true }
+        let octets = host.split(separator: ".")
+        return octets.count == 4 && octets.first == "127" && octets.allSatisfy { UInt8($0) != nil }
     }
 
     private func recover() {
@@ -113,9 +132,8 @@ public actor Pipeline {
     private func run() async {
         while true {
             if Task.isCancelled { return }
-            // Model jobs wait while a call is being recorded. Only audio repair runs. The gate is read
-            // with no await before the claim, so `recordingStarted()` always finds the claimed job.
-            let skipping: Set<JobKind> = host.gate.isRecording ?Set(JobKind.allCases).subtracting([.finalizeAudio, .mirrorMarkdown]) : []
+            // The gate is read with no await before the claim, so `recordingStarted()` always finds the claimed job.
+            let skipping: Set<JobKind> = host.gate.isRecording ? Set(JobKind.allCases.filter(usesThisMac)) : []
             guard let job = try? database.claimNextJob(skipping: skipping) else {
                 await sleep(for: .seconds(policy.idlePoll))
                 continue
