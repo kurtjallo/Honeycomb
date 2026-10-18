@@ -51,6 +51,8 @@ final class EditorHost: NSObject {
         onSourceClicked = onSource
         var payload: [String: Any] = ["loadId": loadID, "mode": editable ? "edit" : "readonly", "placeholder": placeholder]
         payload["doc"] = doc.flatMap(Self.object) ?? NSNull()
+        // Queued stream messages belong to the document this load replaces, and "ready" replays the load before them.
+        pending.removeAll { $0.0 == "streamUpdate" || $0.0 == "streamDone" }
         send("load", payload)
     }
 
