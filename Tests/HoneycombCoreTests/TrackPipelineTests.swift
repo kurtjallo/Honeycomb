@@ -13,8 +13,10 @@ struct TrackPipelineTests {
         recorder.hangNextStop()
         pipeline.end()
         let restarted = (try? pipeline.begin()) != nil
+        pipeline.end()
         recorder.finishHungStop()
         #expect(recorder.isCapturing == restarted, "the hung stop tore down the capture that started after it")
+        #expect(!recorder.calledDuringHungStop)
 
         pipeline.end()
         try pipeline.begin()
@@ -30,10 +32,13 @@ private final class HangingStopRecorder: TrackRecorder, @unchecked Sendable {
     private let lock = NSLock()
     private var capturing = false
     private var hangNext = false
+    private var hanging = false
+    private var overlapped = false
     private let release = DispatchSemaphore(value: 0)
     private let stopReturned = DispatchSemaphore(value: 0)
 
     var isCapturing: Bool { lock.withLock { capturing } }
+    var calledDuringHungStop: Bool { lock.withLock { overlapped } }
 
     func hangNextStop() {
         lock.withLock { hangNext = true }
@@ -45,17 +50,26 @@ private final class HangingStopRecorder: TrackRecorder, @unchecked Sendable {
     }
 
     func start(into sink: AudioSink, onRouteChange: @escaping @Sendable () -> Void) throws -> Double {
-        lock.withLock { capturing = true }
+        lock.withLock {
+            overlapped = overlapped || hanging
+            capturing = true
+        }
         return 48_000
     }
 
     func stop() {
         let hang = lock.withLock {
-            defer { hangNext = false }
-            return hangNext
+            overlapped = overlapped || hanging
+            let hang = hangNext
+            hangNext = false
+            if hang { hanging = true }
+            return hang
         }
         if hang { release.wait() }
-        lock.withLock { capturing = false }
+        lock.withLock {
+            capturing = false
+            if hang { hanging = false }
+        }
         if hang { stopReturned.signal() }
     }
 }
