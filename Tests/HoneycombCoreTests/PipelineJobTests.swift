@@ -130,6 +130,12 @@ struct PipelineJobTests {
         await pipeline.stop()
     }
 
+    @Test(arguments: ["http://0.0.0.0:11434/v1", "http://localhost.:11434/v1", "http://LOCALHOST:11434/v1"])
+    func serversOnThisMacCountAsThisMac(baseURL: String) {
+        let record = ProviderRecord(id: "s", name: "s", kind: .openAICompatible, baseUrl: baseURL, contextTokens: 1, isLocal: false)
+        #expect(Pipeline.runsOnThisMac(record))
+    }
+
     @Test func notesOnAnotherMachineStartDuringARecording() async throws {
         try routeNotes(to: "https://api.openai.com/v1")
         let calls = CallCounter()
