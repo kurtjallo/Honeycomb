@@ -93,13 +93,13 @@ final class TrackPipeline: @unchecked Sendable {
     /// Stops the recorder, writes what is left, and returns the closed segment, if any audio arrived.
     @discardableResult
     func end() -> SegmentMeta? {
-        let timer = queue.sync { () -> DispatchSourceTimer? in
+        let (timer, began) = queue.sync { () -> (DispatchSourceTimer?, Bool) in
             let timer = self.timer
             self.timer = nil
-            return timer
+            return (timer, sink != nil)
         }
         timer?.cancel()
-        let hung = stopRecorder()
+        let hung = began ? stopRecorder() : nil
         return queue.sync {
             if let hung { hungStop = hung }
             drain()
