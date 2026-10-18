@@ -279,6 +279,17 @@ struct NoteWriterTests {
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
     }
 
+    @Test func aFailedFinalSaveMarksTheVersionFailed() async throws {
+        try await database.writer.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER fail_done BEFORE UPDATE ON enhanced WHEN NEW.status = 'done'
+                BEGIN SELECT RAISE(ABORT, 'disk full'); END
+                """)
+        }
+        await #expect(throws: (any Error).self) { _ = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) }
+        #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
+    }
+
     @Test func aModelThatIsNotReadyAddsNoVersion() async throws {
         let versionsWhenAsked = Recorded<Int>()
         let provider = ScriptedChat { [database, meeting] _, _ in
