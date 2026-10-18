@@ -114,12 +114,23 @@ public enum NotesPrompt {
     /// Splits the model's output into the title line and the notes body. A first line that names
     /// one of the template's sections is a heading the model wrote at the wrong level, not a title.
     public static func parseOutput(_ text: String, sections: [String]) -> (title: String?, body: String) {
-        let trimmed = answer(text).trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = unfenced(answer(text).trimmingCharacters(in: .whitespacesAndNewlines))
         guard trimmed.hasPrefix("# ") else { return (nil, trimmed) }
         let firstLine = trimmed.prefix { $0 != "\n" }
         let title = firstLine.dropFirst(2).trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "*"))
         if sections.contains(where: { $0.caseInsensitiveCompare(title) == .orderedSame }) { return (nil, trimmed) }
         let body = trimmed.dropFirst(firstLine.count).trimmingCharacters(in: .whitespacesAndNewlines)
         return (title.isEmpty ? nil : String(title.prefix(80)), body)
+    }
+
+    /// Some models wrap the whole answer in a ```` ```markdown ```` fence. The closing fence is
+    /// missing while the answer streams in, or when it was cut off.
+    static func unfenced(_ text: String) -> String {
+        var lines = text.components(separatedBy: "\n")
+        guard let first = lines.first?.trimmingCharacters(in: .whitespaces).lowercased(),
+              ["```", "```markdown", "```md"].contains(first) else { return text }
+        lines.removeFirst()
+        if lines.last?.trimmingCharacters(in: .whitespaces) == "```" { lines.removeLast() }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

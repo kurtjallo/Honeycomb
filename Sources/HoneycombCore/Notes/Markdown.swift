@@ -28,8 +28,10 @@ public enum Markdown {
         func flushCode() {
             guard let lines = code else { return }
             code = nil
+            // An empty line keeps a code space. Two hard breaks in a row would export as a blank
+            // line, which splits the block in two when the Markdown is read back.
             let content = lines.enumerated().flatMap { offset, line in
-                (offset == 0 ? [] : [PMNode(type: "hardBreak")]) + (line.isEmpty ? [] : [PMNode.text(line, marks: [.code])])
+                (offset == 0 ? [] : [PMNode(type: "hardBreak")]) + [PMNode.text(line.isEmpty ? " " : line, marks: [.code])]
             }
             if !content.isEmpty { blocks.append(block("paragraph", content, newBlockID())) }
         }
