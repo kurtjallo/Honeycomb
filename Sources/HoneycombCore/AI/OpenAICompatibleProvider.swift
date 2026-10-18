@@ -54,8 +54,9 @@ public struct OpenAICompatibleProvider: ChatProvider, EmbeddingProvider {
 }
 
 /// OpenAI itself replaced `max_tokens` with `max_completion_tokens`, and its reasoning models (the
-/// o-series and gpt-5 family) refuse both `max_tokens` and any temperature but the default. Other
-/// servers, such as Ollama and LM Studio, only read `max_tokens`, so they keep the old fields.
+/// o-series and gpt-5 family) refuse both `max_tokens` and any temperature but the default. Those
+/// models are found by name, because gateways such as LiteLLM, Helicone, and OpenRouter pass the
+/// fields through to OpenAI. Other servers, such as Ollama and LM Studio, only read `max_tokens`.
 private struct ChatBody: Encodable, Sendable {
     var model: String
     var messages: [ChatMessage]
@@ -67,15 +68,21 @@ private struct ChatBody: Encodable, Sendable {
     init(_ request: ChatRequest, isOpenAI: Bool) {
         model = request.model
         messages = request.messages
-        guard isOpenAI else {
+        if Self.isReasoningModel(request.model) {
+            maxCompletionTokens = request.maxTokens
+        } else if isOpenAI {
+            maxCompletionTokens = request.maxTokens
+            temperature = request.temperature
+        } else {
             maxTokens = request.maxTokens
             temperature = request.temperature
-            return
         }
-        maxCompletionTokens = request.maxTokens
-        let reasoningModel = request.model.hasPrefix("gpt-5")
-            || (request.model.first == "o" && request.model.dropFirst().first?.isNumber == true)
-        temperature = reasoningModel ? nil : request.temperature
+    }
+
+    /// Gateways may prefix the vendor, as in OpenRouter's `openai/gpt-5`.
+    static func isReasoningModel(_ model: String) -> Bool {
+        let name = model.split(separator: "/").last.map { $0.lowercased() } ?? ""
+        return name.hasPrefix("gpt-5") || (name.first == "o" && name.dropFirst().first?.isNumber == true)
     }
 }
 
