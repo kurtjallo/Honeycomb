@@ -24,6 +24,22 @@ struct TrackPipelineTests {
         pipeline.end()
         #expect(!recorder.isCapturing)
     }
+
+    @Test func aStartDuringAHungStopFailsAtOnce() throws {
+        let recorder = HangingStopRecorder()
+        let pipeline = TrackPipeline(recorder: recorder, folder: folder, clock: SessionClock(), existingSegments: 0,
+                                     stopTimeout: .seconds(1)) { _ in }
+        try pipeline.begin()
+        recorder.hangNextStop()
+        pipeline.end()
+        let clock = ContinuousClock()
+        let started = clock.now
+        #expect(throws: RecorderError.self) { try pipeline.begin() }
+        #expect(clock.now - started < .milliseconds(500), "the health machine paces the retries, not a wait on the session actor")
+        recorder.finishHungStop()
+        try pipeline.begin()
+        pipeline.end()
+    }
 }
 
 private final class HangingStopRecorder: TrackRecorder, @unchecked Sendable {
