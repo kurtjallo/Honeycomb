@@ -58,6 +58,25 @@ struct PipelineJobTests {
         #expect(await calls.count == 1, "the loop stopped")
     }
 
+    @Test func noModelJobStartsOnceTheRecordingGateIsSet() async throws {
+        let calls = CallCounter()
+        await handle { _ in
+            await calls.add()
+            return .written(UUID())
+        }
+        await pipeline.start()
+        host.gate.set(true)
+        await pipeline.enqueue(.enhance, meeting: meeting.id)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await calls.count == 0, "the loop read the gate before claiming")
+        #expect(try enhanceJob()?.status == .queued)
+
+        host.gate.set(false)
+        await pipeline.nudge()
+        #expect(await eventually { await calls.count == 1 })
+        await pipeline.stop()
+    }
+
     @Test func aFailedJobRetriesAfterThePolicyDelay() async throws {
         let calls = CallCounter()
         await handle { _ in
