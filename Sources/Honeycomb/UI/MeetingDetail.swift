@@ -8,6 +8,8 @@ struct MeetingDetail: View {
     @State private var title = ""
     @State private var tab = NotesTab.ai
     @State private var versions: [EnhancedNote] = []
+    /// A version picked from the menu while another one is being written.
+    @State private var pinned: UUID?
 
     enum NotesTab: Hashable {
         case ai
@@ -16,9 +18,15 @@ struct MeetingDetail: View {
 
     /// A generating version left by a crash would lock the editor read-only, so it counts only
     /// while the meeting is really writing notes.
+    private var generating: EnhancedNote? {
+        versions.first { $0.status == .generating && meeting.state == .writingNotes }
+    }
+
+    /// The version on screen. New notes stream in place of the current ones, so edits never land
+    /// on a version about to be replaced, unless you pick another version while they're written.
     private var current: EnhancedNote? {
-        versions.first { $0.id == meeting.currentEnhancedId }
-            ?? versions.first { $0.status == .generating && meeting.state == .writingNotes }
+        guard let generating else { return versions.first { $0.id == meeting.currentEnhancedId } }
+        return versions.first { $0.id == pinned } ?? generating
     }
 
     private var hasAINotes: Bool { current != nil }
@@ -82,7 +90,12 @@ struct MeetingDetail: View {
                             // macOS puts a white label on the selected segment; on `accentStrong` that is under 4.5:1.
                             .tint(.accentText)
                             Spacer()
-                            if tab == .ai { NotesMenu(meeting: meeting, versions: versions) }
+                            if tab == .ai {
+                                NotesMenu(meeting: meeting, versions: versions, shown: current, generating: generating?.id) { version in
+                                    pinned = version.id
+                                    if version.status == .done { model.useVersion(version, of: meeting) }
+                                }
+                            }
                         }
                     }
                 }
@@ -114,6 +127,7 @@ struct MeetingDetail: View {
         .onAppear { title = meeting.title }
         .onChange(of: meeting.title) { title = meeting.title }
         .onDisappear { model.rename(meeting, to: title) }
+        .onChange(of: generating?.id) { pinned = nil }
         .task(id: meeting.id) {
             guard let database = model.database else { return }
             do {
@@ -185,6 +199,9 @@ struct NotesMenu: View {
     @Environment(AppModel.self) private var model
     let meeting: Meeting
     let versions: [EnhancedNote]
+    let shown: EnhancedNote?
+    let generating: UUID?
+    let pick: (EnhancedNote) -> Void
 
     var body: some View {
         Menu {
@@ -199,10 +216,10 @@ struct NotesMenu: View {
                 Section("Versions") {
                     ForEach(versions) { version in
                         Button(version.createdAt.formatted(date: .abbreviated, time: .shortened)
-                               + (version.id == meeting.currentEnhancedId ? " ✓" : "")) {
-                            model.useVersion(version, of: meeting)
+                               + (version.id == shown?.id ? " ✓" : "")) {
+                            pick(version)
                         }
-                        .disabled(version.status != .done)
+                        .disabled(version.status != .done && version.id != generating)
                     }
                 }
             }
