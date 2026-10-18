@@ -155,6 +155,13 @@ struct PipelineJobTests {
         #expect(try database.jobs(for: queued.id).map(\.kind) == [.enhance])
     }
 
+    @Test func retryAfterAFailedFinalPassRunsTheFinalPass() async throws {
+        try database.appendLiveLines([TranscriptLine(channel: .them, startMs: 0, endMs: 2_000, text: "Live words only.")],
+                                     meeting: meeting.id, engine: "test")
+        await pipeline.retry(meeting.id)
+        #expect(try database.jobs(for: meeting.id).map(\.kind) == [.finalizeAudio])
+    }
+
     @Test func aFailedJobRetriesAfterThePolicyDelay() async throws {
         let calls = CallCounter()
         await handle { _ in
