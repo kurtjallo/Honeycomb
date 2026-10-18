@@ -94,6 +94,12 @@ struct DictionaryCorrectorTests {
     @Test func fixesCloseSpellings() {
         #expect(DictionaryCorrector.correct("I spoke with Dana Leigh today.", terms: ["Dana Lee"]) == "I spoke with Dana Lee today.")
         #expect(DictionaryCorrector.correct("the Kubernetis cluster", terms: ["Kubernetes"]) == "the Kubernetes cluster")
+        #expect(DictionaryCorrector.correct("open Honeycom now", terms: ["Honeycomb"]) == "open Honeycomb now")
+    }
+
+    @Test func leavesCommonWordsThatSoundLikeShortNamesAlone() {
+        let text = "It has been a long time, same as when we join calls."
+        #expect(DictionaryCorrector.correct(text, terms: ["Ben", "Tim", "Sam", "Jon"]) == text)
     }
 
     @Test func leavesOtherWordsAlone() {
