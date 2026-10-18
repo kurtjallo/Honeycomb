@@ -213,6 +213,12 @@ struct NoteWriterTests {
         #expect(try database.meeting(meeting.id)?.title == "Acme QBR")
     }
 
+    @Test func aFirstLineThatIsASectionIsNotTheTitle() async throws {
+        _ = try await writer(FakeChat(chunks: ["# Summary\n\n- Acme renews if SSO ships by Q1"])).write(meeting.id)
+        #expect(try database.meeting(meeting.id)?.title == meeting.title)
+        #expect(try database.enhancedNotes(meeting.id).first?.markdown == "# Summary\n\n- Acme renews if SSO ships by Q1")
+    }
+
     @Test func typedNotesDriveAuthorship() async throws {
         try database.saveUserNote(UserNote(meetingId: meeting.id, doc: nil, markdown: "acme renews if SSO by Q1"))
         _ = try await writer(FakeChat(chunks: ["# T\n\n## Summary\n\nAcme renews if SSO ships by Q1.\n\nThey asked about seats."])).write(meeting.id)
