@@ -163,6 +163,17 @@ public enum Markdown {
             }
             return nil
         }
+        func closingParen(from start: Int) -> Int? {
+            var depth = 0
+            for position in start..<chars.count {
+                if chars[position] == "(" { depth += 1 }
+                if chars[position] == ")" {
+                    if depth == 0 { return position }
+                    depth -= 1
+                }
+            }
+            return nil
+        }
         func adding(_ mark: PMMark) -> [PMMark] { marks.contains(mark) ? marks : marks + [mark] }
 
         while index < chars.count {
@@ -184,8 +195,8 @@ public enum Markdown {
                 flush()
                 nodes += inline(String(chars[index + 1..<close]), marks: adding(.italic))
                 index = close + 1
-            } else if character == "[", let middle = find(["]", "("], from: index + 1),
-                      let close = find([")"], from: middle + 2) {
+            } else if character == "[", let middle = find(["]"], from: index + 1),
+                      middle + 1 < chars.count, chars[middle + 1] == "(", let close = closingParen(from: middle + 2) {
                 flush()
                 let label = String(chars[index + 1..<middle])
                 let href = String(chars[middle + 2..<close]).trimmingCharacters(in: .whitespaces)
