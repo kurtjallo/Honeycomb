@@ -91,14 +91,22 @@ struct RecordingLifecycleTests {
         recording()
         _ = lifecycle.handle(.pause)
         #expect(lifecycle.handle(.resume) == [.resumeCapture])
-        #expect(lifecycle.handle(.resumeFailed).isEmpty)
+        #expect(lifecycle.handle(.resumeFailed) == [.alert(.captureFailed)])
         #expect(lifecycle.phase.isPaused)
+    }
+
+    @Test mutating func aFailedResumeAfterTheCallCameBackStaysPaused() {
+        recording()
+        _ = lifecycle.handle(.callEnded(atMs: 0))
+        #expect(lifecycle.handle(.callResumed) == [.resumeCapture])
+        #expect(lifecycle.handle(.resumeFailed) == [.alert(.captureFailed)])
+        #expect(lifecycle.phase == .paused(ActiveRecording(meetingID: meeting, callKey: nil)))
     }
 
     @Test mutating func aFailedCaptureReturnsToIdle() {
         _ = lifecycle.handle(.start(.newMeeting))
         #expect(lifecycle.phase.holdsModels)
-        #expect(lifecycle.handle(.captureFailed).isEmpty)
+        #expect(lifecycle.handle(.captureFailed(.micDenied)) == [.alert(.micDenied)])
         #expect(lifecycle.phase == .idle)
         #expect(!lifecycle.phase.holdsModels)
         #expect(lifecycle.handle(.start(.newMeeting)) == [.startCapture(.newMeeting)])
@@ -139,7 +147,7 @@ struct RecordingLifecycleTests {
         _ = lifecycle.handle(.start(.newMeeting))
         #expect(lifecycle.handle(.quitRequested) == [.askToQuit])
         #expect(lifecycle.handle(.quitConfirmed) == [.cancelStart])
-        #expect(lifecycle.handle(.captureFailed) == [.quit])
+        #expect(lifecycle.handle(.captureFailed(nil)) == [.quit], "a cancelled start shows no alert")
     }
 
     @Test mutating func quitWhileStartingStopsACaptureThatOpenedAnyway() {
@@ -161,7 +169,7 @@ struct RecordingLifecycleTests {
         var generator = SplitMix(seed: 7)
         let events: [RecordingEvent] = [
             .stop, .pause, .resume, .quitCancelled, .callEnded(atMs: 0), .callResumed, .tick(atMs: 100_000),
-            .captureOpened(meetingID: UUID()), .captureFailed, .resumeFailed, .stopFinished,
+            .captureOpened(meetingID: UUID()), .captureFailed(.captureFailed), .resumeFailed, .stopFinished,
         ]
         for _ in 0..<200 {
             var lifecycle = RecordingLifecycle()
