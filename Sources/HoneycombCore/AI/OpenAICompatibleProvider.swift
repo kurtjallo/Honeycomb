@@ -120,18 +120,27 @@ private struct OpenAIStreamDecoder: ChatStreamDecoder {
     }
 
     private var think = ThinkFilter()
-    private var finish = FinishReason.stop
+    private var finish: FinishReason?
 
     mutating func decode(_ event: SSEEvent) throws -> [ChatDelta] {
-        if event.data == "[DONE]" { return end() }
+        if event.data == "[DONE]" {
+            finish = finish ?? .stop
+            return end()
+        }
         let chunk = try ProviderTransport.decode(StreamChunk.self, from: Data(event.data.utf8))
         if let error = chunk.error { throw error.providerError }
         guard let choice = chunk.choices?.first else { return [] }
-        if choice.finishReason == "length" { finish = .length }
-        return [.text(think.feed(choice.delta?.content ?? ""))]
+        let text = think.feed(choice.delta?.content ?? "")
+        switch choice.finishReason {
+        case nil: break
+        case "length": finish = .length
+        case "content_filter": throw ProviderError.refused
+        default: finish = .stop
+        }
+        return [.text(text)]
     }
 
     mutating func end() -> [ChatDelta] {
-        [.text(think.finish()), .finished(finish)]
+        [.text(think.finish())] + (finish.map { [.finished($0)] } ?? [])
     }
 }

@@ -446,7 +446,8 @@ protocol ChatStreamDecoder: Sendable {
     init()
     /// A `.finished` delta ends the stream.
     mutating func decode(_ event: SSEEvent) throws -> [ChatDelta]
-    /// The deltas to send when the server closes the stream without finishing it.
+    /// The deltas to send when the server closes the stream. They end with `.finished` only if the
+    /// server said why the answer stopped.
     mutating func end() -> [ChatDelta]
 }
 
@@ -574,11 +575,11 @@ struct ProviderTransport: Sendable {
         }
         // A 200 with no events at all would otherwise read as an empty answer.
         guard sawEvent else { throw ProviderError.invalidResponse }
-        send(decoder.end(), to: continuation, tracker: tracker)
+        // A stream closed before the server said it was done was cut off, like a dropped connection.
+        guard send(decoder.end(), to: continuation, tracker: tracker) else { throw ProviderError.unreachable }
     }
 
     /// Returns true once the stream has finished.
-    @discardableResult
     private func send(_ deltas: [ChatDelta], to continuation: AsyncThrowingStream<ChatDelta, any Error>.Continuation,
                       tracker: AttemptTracker) -> Bool {
         for delta in deltas {
