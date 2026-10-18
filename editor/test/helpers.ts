@@ -15,10 +15,13 @@ export function mountEditor() {
   const editor = start(scroller)
   const { honeycomb } = window
   if (!honeycomb) throw new Error('start() did not install window.honeycomb')
+  let loads = 0
   return {
     editor,
     scroller,
-    send: (type: string, payload: unknown = {}) => honeycomb.receive({ v: 1, type, payload }),
+    // Swift numbers every load, so this does too unless the test passes its own loadId.
+    send: (type: string, payload: object = {}) =>
+      honeycomb.receive({ v: 1, type, payload: type === 'load' ? { loadId: ++loads, ...payload } : payload }),
     sent: (type: string): Sent[] => postMessage.mock.calls.map(([message]) => message as Sent).filter(m => m.type === type),
     getDoc: () => {
       const reply = honeycomb.receive({ v: 1, type: 'getDoc', payload: {} })

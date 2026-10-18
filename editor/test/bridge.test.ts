@@ -129,17 +129,34 @@ describe('docChanged', () => {
     vi.advanceTimersByTime(499)
     expect(ed.sent('docChanged')).toEqual([])
     vi.advanceTimersByTime(1)
-    expect(ed.sent('docChanged')).toEqual([{ v: 1, type: 'docChanged', payload: { doc: doc(p('a', text('Hello!?'))) } }])
+    expect(ed.sent('docChanged')).toEqual([{ v: 1, type: 'docChanged', payload: { loadId: 1, doc: doc(p('a', text('Hello!?'))) } }])
     vi.advanceTimersByTime(5000)
     expect(ed.sent('docChanged')).toHaveLength(1)
   })
 
-  test('a load drops an edit that has not been reported yet', () => {
-    ed.send('load', { doc: doc(p('a', text('Hello'))), mode: 'edit' })
+  test('a load reports an unreported edit at once, tagged with the load it belongs to', () => {
+    ed.send('load', { doc: doc(p('a', text('Hello'))), mode: 'edit', loadId: 7 })
     typeText(ed.editor, '!', 6)
-    ed.send('load', { doc: doc(p('b', text('Other note'))), mode: 'edit' })
+    vi.advanceTimersByTime(300)
+    ed.send('load', { doc: doc(p('b', text('Other note'))), mode: 'edit', loadId: 8 })
+    expect(ed.sent('docChanged').map(m => m.payload)).toEqual([{ loadId: 7, doc: doc(p('a', text('Hello!'))) }])
+    typeText(ed.editor, '?', 11)
     vi.advanceTimersByTime(5000)
+    expect(ed.sent('docChanged').map(m => m.payload)).toEqual([
+      { loadId: 7, doc: doc(p('a', text('Hello!'))) },
+      { loadId: 8, doc: doc(p('b', text('Other note?'))) },
+    ])
+  })
+
+  test('flush reports an unreported edit at once, and nothing when there is none', () => {
+    ed.send('load', { doc: doc(p('a', text('Hello'))), mode: 'edit' })
+    expect(ed.send('flush')).toEqual({ ok: true })
     expect(ed.sent('docChanged')).toEqual([])
+    typeText(ed.editor, '!', 6)
+    ed.send('flush')
+    expect(ed.sent('docChanged').map(m => m.payload)).toEqual([{ loadId: 1, doc: doc(p('a', text('Hello!'))) }])
+    vi.advanceTimersByTime(5000)
+    expect(ed.sent('docChanged')).toHaveLength(1)
   })
 
   test('undo never brings back a document that Swift replaced', () => {
@@ -152,7 +169,7 @@ describe('docChanged', () => {
     expect(ed.editor.commands.undo()).toBe(false)
     expect(ed.getDoc()).toEqual(doc(p('c', ai('Final notes'))))
     vi.advanceTimersByTime(5000)
-    expect(ed.sent('docChanged')).toEqual([])
+    expect(ed.sent('docChanged').map(m => m.payload)).toEqual([{ loadId: 1, doc: doc(p(null)) }])
   })
 
   test('undo still works for edits made after a load', () => {
@@ -175,24 +192,26 @@ describe('docChanged', () => {
 describe('envelopes', () => {
   const rejected: Array<[string, unknown, string]> = [
     ['not an object', 'load', 'badEnvelope'],
-    ['version 2', { v: 2, type: 'load', payload: { doc: null, mode: 'edit' } }, 'badVersion'],
-    ['missing version', { type: 'load', payload: { doc: null, mode: 'edit' } }, 'badVersion'],
+    ['version 2', { v: 2, type: 'load', payload: { loadId: 1, doc: null, mode: 'edit' } }, 'badVersion'],
+    ['missing version', { type: 'load', payload: { loadId: 1, doc: null, mode: 'edit' } }, 'badVersion'],
     ['unknown type', { v: 1, type: 'deleteEverything', payload: {} }, 'unknownType'],
     ['inherited key as type', { v: 1, type: 'toString', payload: {} }, 'unknownType'],
     ['outbound type', { v: 1, type: 'docChanged', payload: { doc: everything } }, 'unknownType'],
     ['payload not an object', { v: 1, type: 'getDoc', payload: [] }, 'badPayload'],
-    ['bad mode', { v: 1, type: 'load', payload: { doc: null, mode: 'write' } }, 'badPayload'],
-    ['missing doc', { v: 1, type: 'load', payload: { mode: 'edit' } }, 'badPayload'],
-    ['unknown node', { v: 1, type: 'load', payload: { doc: doc({ type: 'image', attrs: { src: 'x' } }), mode: 'edit' } }, 'badPayload'],
+    ['bad mode', { v: 1, type: 'load', payload: { loadId: 1, doc: null, mode: 'write' } }, 'badPayload'],
+    ['missing load ID', { v: 1, type: 'load', payload: { doc: null, mode: 'edit' } }, 'badPayload'],
+    ['fractional load ID', { v: 1, type: 'load', payload: { loadId: 1.5, doc: null, mode: 'edit' } }, 'badPayload'],
+    ['missing doc', { v: 1, type: 'load', payload: { loadId: 1, mode: 'edit' } }, 'badPayload'],
+    ['unknown node', { v: 1, type: 'load', payload: { loadId: 1, doc: doc({ type: 'image', attrs: { src: 'x' } }), mode: 'edit' } }, 'badPayload'],
     ['unknown mark', { v: 1, type: 'streamUpdate', payload: { doc: doc(p('a', text('x', 'strike'))) } }, 'badPayload'],
     ['invalid nesting', { v: 1, type: 'streamDone', payload: { doc: doc(text('loose')) } }, 'badPayload'],
-    ['empty doc', { v: 1, type: 'load', payload: { doc: { type: 'doc', content: [] }, mode: 'edit' } }, 'badPayload'],
-    ['heading level 6', { v: 1, type: 'load', payload: { doc: doc({ type: 'heading', attrs: { level: 6 }, content: [text('x')] }), mode: 'edit' } }, 'badPayload'],
-    ['heading level as text', { v: 1, type: 'load', payload: { doc: doc({ type: 'heading', attrs: { level: '2' }, content: [text('x')] }), mode: 'edit' } }, 'badPayload'],
-    ['list start as text', { v: 1, type: 'load', payload: { doc: doc({ type: 'orderedList', attrs: { start: 'abc' }, content: [{ type: 'listItem', content: [p('x')] }] }), mode: 'edit' } }, 'badPayload'],
-    ['checked as text', { v: 1, type: 'load', payload: { doc: doc({ type: 'taskList', content: [{ type: 'taskItem', attrs: { checked: 'false' }, content: [p('x')] }] }), mode: 'edit' } }, 'badPayload'],
-    ['numeric block ID', { v: 1, type: 'load', payload: { doc: doc(p(7 as unknown as string, text('x'))), mode: 'edit' } }, 'badPayload'],
-    ['placeholder not a string', { v: 1, type: 'load', payload: { doc: null, mode: 'edit', placeholder: 3 } }, 'badPayload'],
+    ['empty doc', { v: 1, type: 'load', payload: { loadId: 1, doc: { type: 'doc', content: [] }, mode: 'edit' } }, 'badPayload'],
+    ['heading level 6', { v: 1, type: 'load', payload: { loadId: 1, doc: doc({ type: 'heading', attrs: { level: 6 }, content: [text('x')] }), mode: 'edit' } }, 'badPayload'],
+    ['heading level as text', { v: 1, type: 'load', payload: { loadId: 1, doc: doc({ type: 'heading', attrs: { level: '2' }, content: [text('x')] }), mode: 'edit' } }, 'badPayload'],
+    ['list start as text', { v: 1, type: 'load', payload: { loadId: 1, doc: doc({ type: 'orderedList', attrs: { start: 'abc' }, content: [{ type: 'listItem', content: [p('x')] }] }), mode: 'edit' } }, 'badPayload'],
+    ['checked as text', { v: 1, type: 'load', payload: { loadId: 1, doc: doc({ type: 'taskList', content: [{ type: 'taskItem', attrs: { checked: 'false' }, content: [p('x')] }] }), mode: 'edit' } }, 'badPayload'],
+    ['numeric block ID', { v: 1, type: 'load', payload: { loadId: 1, doc: doc(p(7 as unknown as string, text('x'))), mode: 'edit' } }, 'badPayload'],
+    ['placeholder not a string', { v: 1, type: 'load', payload: { loadId: 1, doc: null, mode: 'edit', placeholder: 3 } }, 'badPayload'],
     ['bad appearance', { v: 1, type: 'setTheme', payload: { appearance: 'blue', fontSize: 15, underlineAI: false } }, 'badPayload'],
     ['bad font size', { v: 1, type: 'setTheme', payload: { appearance: 'dark', fontSize: '15', underlineAI: false } }, 'badPayload'],
     ['infinite font size', { v: 1, type: 'setTheme', payload: { appearance: 'dark', fontSize: Infinity, underlineAI: false } }, 'badPayload'],
