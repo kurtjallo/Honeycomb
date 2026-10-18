@@ -118,9 +118,18 @@ public actor RecordingSession {
     public func resume() throws {
         guard state == .paused else { return }
         let now = clock.nowMs()
+        var begun: [TrackPipeline] = []
+        do {
+            for pipeline in pipelines.values {
+                try pipeline.begin()
+                begun.append(pipeline)
+            }
+        } catch {
+            for pipeline in begun { closed(pipeline.end(), on: pipeline.channel) }
+            throw error
+        }
         if !meta.pauses.isEmpty { meta.pauses[meta.pauses.count - 1].endMs = now }
-        for (channel, pipeline) in pipelines {
-            try pipeline.begin()
+        for channel in pipelines.keys {
             apply(machines[channel]!.handle(.started(atMs: now)), to: channel)
         }
         state = .recording
