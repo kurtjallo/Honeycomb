@@ -160,8 +160,14 @@ struct NotesEditor: View {
             .onChange(of: key) { load() }
             .onChange(of: current?.markdown) {
                 guard tab == .ai, let current, current.status == .generating else { return }
-                EditorHost.shared.streamUpdate(Markdown.document(current.markdown))
+                EditorHost.shared.streamUpdate(document(current))
             }
+    }
+
+    /// A streaming version has only Markdown, so it gets the same AI marks the finished one will.
+    private func document(_ note: EnhancedNote) -> PMNode {
+        note.doc.flatMap(PMNode.decode)
+            ?? Authorship.apply(to: Markdown.document(note.markdown), userNotes: (try? model.database?.userNote(meeting.id))??.markdown ?? "")
     }
 
     private func load() {
@@ -180,11 +186,10 @@ struct NotesEditor: View {
         case .ai:
             guard var note = current else { return }
             if note.status == .generating {
-                host.load(Markdown.document(note.markdown), editable: false, placeholder: "Writing notes…", onChange: nil)
+                host.load(document(note), editable: false, placeholder: "Writing notes…", onChange: nil)
                 return
             }
-            let doc = note.doc.flatMap(PMNode.decode) ?? Markdown.document(note.markdown)
-            host.load(doc, editable: true, placeholder: "", onChange: { doc in
+            host.load(document(note), editable: true, placeholder: "", onChange: { doc in
                 note.doc = doc.encoded()
                 note.markdown = Markdown.markdown(doc)
                 try? database.saveEnhanced(note)
