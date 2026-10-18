@@ -85,6 +85,17 @@ describe('load and getDoc', () => {
     expect(ed.scroller.querySelector('p')?.dataset.placeholder).toBe('Write notes')
   })
 
+  test('a read-only empty document shows its placeholder too', () => {
+    ed.send('load', { doc: null, mode: 'readonly', placeholder: 'Writing notes…' })
+    expect(ed.scroller.querySelector('p')?.dataset.placeholder).toBe('Writing notes…')
+  })
+
+  test('the placeholder goes away once the note has text', () => {
+    ed.send('load', { doc: null, mode: 'edit', placeholder: 'Write notes' })
+    typeText(ed.editor, 'Hi', 1)
+    expect(ed.scroller.querySelector('p')?.dataset.placeholder).toBeUndefined()
+  })
+
   test('the mode decides whether the page is editable', () => {
     ed.send('load', { doc: everything, mode: 'readonly' })
     expect(ed.editor.isEditable).toBe(false)
