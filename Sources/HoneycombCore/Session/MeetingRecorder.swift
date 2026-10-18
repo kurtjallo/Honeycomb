@@ -71,7 +71,6 @@ public actor MeetingRecorder {
             throw RecordingError.captureFailed
         }
         active = (meeting.id, session)
-        await host?.setRecording(true)
         startLiveTranscript(meeting: meeting.id, session: session, onLive: onLive)
         return (meeting.id, session)
     }
@@ -128,7 +127,6 @@ public actor MeetingRecorder {
         let meta = await active.session.stop()
         await live?.value
         live = nil
-        await host?.setRecording(false)
         if var meeting = try? database.meeting(active.meetingID) {
             meeting.state = .transcribing
             meeting.endAt = Date()

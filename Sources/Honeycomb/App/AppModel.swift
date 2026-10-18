@@ -264,7 +264,7 @@ final class AppModel {
         pill.show()
         // The pipeline must see the flag before it is preempted, or it claims the same model job
         // again while the capture is still starting.
-        await host?.setRecording(true)
+        host?.gate.set(true)
         await pipeline?.recordingStarted()
         do {
             let (id, session) = try await recorder.start(existing: existing, callApp: callApp) { update in
@@ -282,7 +282,7 @@ final class AppModel {
             }
         } catch {
             pill.hide()
-            await host?.setRecording(false)
+            host?.gate.set(false)
             alert = (error as? RecordingError).map(AppAlert.init)
                 ?? AppAlert(title: "Couldn't start recording", message: "Something went wrong starting the recording.")
         }
@@ -307,6 +307,7 @@ final class AppModel {
         showConsent = false
         pill.hide()
         let id = await recorder.stop()
+        host?.gate.set(false)
         recordingMeetingID = nil
         partials = [:]
         if let id { await pipeline?.meetingStopped(id) }

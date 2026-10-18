@@ -60,7 +60,8 @@ public actor ModelHost {
     private var speech: SpeechModels?
     private var speechLeases = 0
     private var speechUnload: Task<Void, Never>?
-    public private(set) var isRecording = false
+    /// Written by the app's recording lifecycle. Read here and by the pipeline.
+    public nonisolated let gate = RecordingGate()
     private var unloadHandlers: [ModelPolicy.Model: @Sendable () async -> Void] = [:]
     private var loaded: Set<ModelPolicy.Model> = []
     private var leases: [ModelPolicy.Model: Int] = [:]
@@ -71,9 +72,7 @@ public actor ModelHost {
         self.speechIdleUnload = speechIdleUnload
     }
 
-    public func setRecording(_ recording: Bool) {
-        isRecording = recording
-    }
+    public nonisolated var isRecording: Bool { gate.isRecording }
 
     public func acquireSpeech() async throws -> SpeechModels {
         speechUnload?.cancel()

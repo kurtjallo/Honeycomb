@@ -110,14 +110,14 @@ struct PipelineJobTests {
         await pipeline.enqueue(.enhance, meeting: meeting.id)
         #expect(try await eventually { try database.enhancedNotes(meeting.id).first?.status == .generating })
 
-        await host.setRecording(true)
+        host.gate.set(true)
         await pipeline.recordingStarted()
         #expect(try await eventually { try enhanceJob()?.status == .queued }, "the job goes back in the queue")
         #expect(try database.enhancedNotes(meeting.id).map(\.status) == [.canceled])
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
         #expect(try database.meeting(meeting.id)?.waitReason == .modelBusy, "the meeting says it waits for the recording")
 
-        await host.setRecording(false)
+        host.gate.set(false)
         await pipeline.nudge()
         #expect(try await eventually { try database.meeting(meeting.id)?.state == .ready })
         let finished = try #require(try database.meeting(meeting.id))
@@ -137,7 +137,7 @@ struct PipelineJobTests {
     @Test func aJobThatCrashesTheAppEveryTimeFails() async throws {
         try database.enqueue(.enhance, meeting: meeting.id)
         // Model jobs wait during a recording, so each relaunch only runs recovery.
-        await host.setRecording(true)
+        host.gate.set(true)
         for _ in 0..<Self.fast.maxAttempts {
             _ = try database.claimNextJob()
             let relaunched = Pipeline(database: database, paths: paths, host: host, policy: Self.fast)

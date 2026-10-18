@@ -83,7 +83,7 @@ struct BuiltInLLMTests {
         let (llm, host) = try makeLLM(downloaded: [large])
         _ = try await llm.use(large)
         await llm.done(large)
-        await host.setRecording(true)
+        host.gate.set(true)
 
         await #expect(throws: ModelHostError.notAllowedNow) { try await llm.use(large) }
     }
@@ -93,7 +93,7 @@ struct BuiltInLLMTests {
         let (llm, host) = try makeLLM(downloaded: recording ? [small, large] : [small], idleUnload: .milliseconds(200))
         _ = try await llm.use(small)
         await llm.done(small)
-        await host.setRecording(recording)
+        host.gate.set(recording)
 
         await #expect(throws: (any Error).self) { try await llm.use(large) }
 
@@ -113,7 +113,7 @@ struct BuiltInLLMTests {
     func interrupt(_ use: Task<String, any Error>, _ interruption: Interruption, host: ModelHost) async {
         switch interruption {
         case .cancel: use.cancel()
-        case .recordingStarts: await host.setRecording(true)
+        case .recordingStarts: host.gate.set(true)
         }
     }
 

@@ -112,10 +112,10 @@ public actor Pipeline {
 
     private func run() async {
         while true {
-            let recording = await host.isRecording
             if Task.isCancelled { return }
-            // Model jobs wait while a call is being recorded. Only audio repair runs.
-            let skipping: Set<JobKind> = recording ? Set(JobKind.allCases).subtracting([.finalizeAudio, .mirrorMarkdown]) : []
+            // Model jobs wait while a call is being recorded. Only audio repair runs. The gate is read
+            // with no await before the claim, so `recordingStarted()` always finds the claimed job.
+            let skipping: Set<JobKind> = host.gate.isRecording ?Set(JobKind.allCases).subtracting([.finalizeAudio, .mirrorMarkdown]) : []
             guard let job = try? database.claimNextJob(skipping: skipping) else {
                 await sleep(for: .seconds(policy.idlePoll))
                 continue
