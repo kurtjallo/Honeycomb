@@ -52,6 +52,8 @@ public enum DetectionCommand: Sendable, Equatable {
     case startRecording(CallPrompt)
     /// The recorded call app let go of the mic: stop and write notes.
     case callEnded
+    /// The recorded call app took the mic back after `.callEnded`: keep recording.
+    case callResumed
 }
 
 /// Decides when to ask "Take notes?" and when a call has ended, from which apps use the mic.
@@ -66,6 +68,13 @@ public struct DetectionMachine: Sendable {
         case recording
     }
 
+    /// Whether the recorded call app still holds the mic.
+    enum CallEnd: Sendable, Equatable {
+        case ongoing
+        case ending(sinceMs: Int64)
+        case ended
+    }
+
     struct Activation: Sendable, Equatable {
         var app: CallApp
         var phase: Phase
@@ -78,7 +87,7 @@ public struct DetectionMachine: Sendable {
     private var activations: [String: Activation] = [:]
     private var isRecording = false
     private var recordedApp: CallApp?
-    private var endingSinceMs: Int64?
+    private var callEnd = CallEnd.ongoing
 
     public init(policy: DetectionPolicy = DetectionPolicy(), callApps: [CallApp], accessibilityTrusted: Bool) {
         self.policy = policy
@@ -99,9 +108,10 @@ public struct DetectionMachine: Sendable {
         case .micStarted(let key, let bundleID, let at):
             guard let app = callApp(for: bundleID), app.ask else { return [] }
             if isRecording, app.bundleId == recordedApp?.bundleId {
-                endingSinceMs = nil
+                let ended = callEnd == .ended
+                callEnd = .ongoing
                 activations[key] = Activation(app: app, phase: .recording)
-                return []
+                return ended ? [.callResumed] : []
             }
             if activations.values.contains(where: { $0.app.bundleId == app.bundleId && $0.phase == .quiet }) {
                 activations[key] = Activation(app: app, phase: .quiet)
@@ -116,7 +126,7 @@ public struct DetectionMachine: Sendable {
             if activation.phase == .prompted { commands.append(.hide(key: key)) }
             if activation.phase == .recording, isRecording,
                !activations.values.contains(where: { $0.phase == .recording }) {
-                endingSinceMs = at
+                callEnd = .ending(sinceMs: at)
             }
             return commands
 
@@ -134,8 +144,8 @@ public struct DetectionMachine: Sendable {
 
         case .tick(let now):
             var commands: [DetectionCommand] = []
-            if let since = endingSinceMs, now - since >= policy.endAfterMs {
-                endingSinceMs = nil
+            if case .ending(let since) = callEnd, now - since >= policy.endAfterMs {
+                callEnd = .ended
                 commands.append(.callEnded)
             }
             for (key, activation) in activations {
@@ -173,7 +183,7 @@ public struct DetectionMachine: Sendable {
 
         case .recordingStarted(let key):
             isRecording = true
-            endingSinceMs = nil
+            callEnd = .ongoing
             recordedApp = key.flatMap { activations[$0]?.app }
             if let key { activations[key]?.phase = .recording }
             return []
@@ -181,7 +191,7 @@ public struct DetectionMachine: Sendable {
         case .recordingStopped:
             isRecording = false
             recordedApp = nil
-            endingSinceMs = nil
+            callEnd = .ongoing
             for (key, activation) in activations where activation.phase == .recording {
                 activations[key]?.phase = .quiet
             }

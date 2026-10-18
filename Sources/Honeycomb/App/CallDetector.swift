@@ -78,6 +78,8 @@ final class CallDetector {
                 Task { await model?.startFromPrompt(prompt) }
             case .callEnded:
                 model?.callEnded()
+            case .callResumed:
+                model?.keepRecording()
             }
         }
     }
