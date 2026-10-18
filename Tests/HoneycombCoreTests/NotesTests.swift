@@ -69,6 +69,15 @@ struct MarkdownTests {
         #expect(Markdown.inline("*a _b_ c*") == [.text("a b c", marks: [.italic])])
     }
 
+    @Test func linksStartAtTheirOwnBracketAndKeepParensInTheURL() {
+        #expect(Markdown.inline("[12:30] Them: see [deck](https://acme.com/deck)") == [
+            .text("[12:30] Them: see "), .text("deck", marks: [.link("https://acme.com/deck")]),
+        ])
+        #expect(Markdown.inline("[wiki](https://en.wikipedia.org/wiki/Foo_(bar)).") == [
+            .text("wiki", marks: [.link("https://en.wikipedia.org/wiki/Foo_(bar)")]), .text("."),
+        ])
+    }
+
     @Test func documentJSONRoundTrips() throws {
         let doc = Markdown.document("## Hi\n\n- [x] done")
         let decoded = try #require(PMNode.decode(doc.encoded()))
