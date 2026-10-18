@@ -300,7 +300,6 @@ final class AppModel {
                 do {
                     try await recorder?.resume()
                 } catch {
-                    alert = AppAlert(.captureFailed)
                     send(.resumeFailed)
                 }
             }
@@ -316,11 +315,13 @@ final class AppModel {
             }
         case .cancelQuit:
             NSApp.reply(toApplicationShouldTerminate: false)
+        case .alert(let error):
+            alert = AppAlert(error)
         }
     }
 
     private func openCapture(_ target: StartTarget) async {
-        guard let recorder else { return send(.captureFailed) }
+        guard let recorder else { return send(.captureFailed(.captureFailed)) }
         await pipeline?.recordingStarted()
         let existing: UUID?
         let callApp: CallApp?
@@ -340,11 +341,7 @@ final class AppModel {
             send(.captureOpened(meetingID: id))
         } catch {
             pill.hide()
-            if !(error is CancellationError) {
-                alert = (error as? RecordingError).map(AppAlert.init)
-                    ?? AppAlert(title: "Couldn't start recording", message: "Something went wrong starting the recording.")
-            }
-            send(.captureFailed)
+            send(.captureFailed(error is CancellationError ? nil : (error as? RecordingError) ?? .captureFailed))
         }
     }
 

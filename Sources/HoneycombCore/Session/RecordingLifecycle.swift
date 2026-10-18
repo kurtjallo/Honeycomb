@@ -100,7 +100,8 @@ public enum RecordingEvent: Sendable, Equatable {
     case tick(atMs: Int64)
     // Results of the commands.
     case captureOpened(meetingID: UUID)
-    case captureFailed
+    /// nil when the start was cancelled.
+    case captureFailed(RecordingError?)
     case resumeFailed
     case stopFinished
 }
@@ -112,6 +113,7 @@ public enum RecordingCommand: Sendable, Equatable {
     /// Capture is open: show it and tell call detection.
     case began(ActiveRecording)
     case pauseCapture
+    /// Resume capture, or send `.resumeFailed`.
     case resumeCapture
     /// Stop capture, hand the meeting to the pipeline, then send `.stopFinished`.
     case stopCapture
@@ -120,6 +122,7 @@ public enum RecordingCommand: Sendable, Equatable {
     /// Stop the pipeline, then let the app quit.
     case quit
     case cancelQuit
+    case alert(RecordingError)
 }
 
 /// Start, pause, resume, the auto-stop after a call ends, stop, and quit, as one state machine.
@@ -202,15 +205,15 @@ public struct RecordingLifecycle: Sendable {
             phase = .recording(active)
             return [.began(active)]
 
-        case .captureFailed:
+        case .captureFailed(let error):
             guard case .starting(_, let quitWhenOpen) = phase else { return [] }
             phase = quitWhenOpen ? .quitting : .idle
-            return quitWhenOpen ? [.quit] : []
+            return (error.map { [.alert($0)] } ?? []) + (quitWhenOpen ? [.quit] : [])
 
         case .resumeFailed:
             guard case .recording(let active) = phase else { return [] }
             phase = .paused(active)
-            return []
+            return [.alert(.captureFailed)]
 
         case .stopFinished:
             guard case .stopping(_, let then) = phase else { return [] }
