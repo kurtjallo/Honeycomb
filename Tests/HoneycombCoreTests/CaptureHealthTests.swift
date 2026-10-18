@@ -115,6 +115,14 @@ struct CaptureHealthTests {
         #expect(machine.finalStatus(stoppedAtMs: 30_000) == .complete)
     }
 
+    @Test mutating func routeChangeWhileStartingKeepsTheStartupGrace() {
+        _ = machine.handle(.started(atMs: 0))
+        _ = machine.handle(.routeChanged(atMs: 200))
+        #expect(tick(from: 200, to: 1_900).isEmpty)
+        #expect(write(from: 2_000, to: 10_000).isEmpty)
+        #expect(machine.health == .ok)
+    }
+
     @Test mutating func samplesDrainedJustAfterARouteChangeDoNotProveItSurvived() {
         _ = machine.handle(.started(atMs: 0))
         _ = write(from: 100, to: 2_000)
