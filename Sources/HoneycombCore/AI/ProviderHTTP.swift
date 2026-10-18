@@ -562,9 +562,14 @@ struct ProviderTransport: Sendable {
                                            into continuation: AsyncThrowingStream<ChatDelta, any Error>.Continuation) async throws {
         var decoder = D()
         var sawEvent = false
-        for try await event in ServerSentEvents(bytes: try await open(request, tracker: tracker)) {
+        // Every line counts as life, comments included: OpenRouter sends only ": OPENROUTER PROCESSING"
+        // while a reasoning model thinks, and other servers send ": ping".
+        let bytes = try await open(request, tracker: tracker).map { byte in
+            if byte == UInt8(ascii: "\n") || byte == UInt8(ascii: "\r") { tracker.receivedEvent() }
+            return byte
+        }
+        for try await event in ServerSentEvents(bytes: bytes) {
             sawEvent = true
-            tracker.receivedEvent()
             if send(try decoder.decode(event), to: continuation, tracker: tracker) { return }
         }
         // A 200 with no events at all would otherwise read as an empty answer.
