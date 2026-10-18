@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.kurtjallo.Honeycomb</string>
+    <key>CFBundleName</key>
+    <string>Honeycomb</string>
+    <key>CFBundleDisplayName</key>
+    <string>Honeycomb</string>
+    <key>CFBundleExecutable</key>
+    <string>Honeycomb</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__BUILD__</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Honeycomb records your microphone as the "Me" side of the transcript.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Honeycomb records the call audio as the "Them" side of the transcript.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Honeycomb can use Apple's on-device speech engine while its own speech model downloads.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Honeycomb can use an AI model server you run on your network, such as Ollama or LM Studio.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+</dict>
+</plist>
