@@ -57,6 +57,15 @@ struct DetectionTests {
         #expect(ticks(3_500, 60_000).isEmpty)
     }
 
+    @Test mutating func aMeetingTabOpenedAfterTheMicStartsStillPrompts() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
+        _ = ticks(0, 3_000)
+        _ = machine.handle(.titleRead(key: "1", title: "New Tab"))
+        #expect(ticks(3_500, 5_000) == [.readTitle(key: "1", bundleID: "com.google.Chrome")])
+        let prompts = shown(machine.handle(.titleRead(key: "1", title: "Meet - abc-defg-hij")))
+        #expect(prompts.map(\.kind) == [.site("Google Meet")])
+    }
+
     @Test mutating func browserWithoutAccessibilityGetsTheGenericPrompt() {
         machine.accessibilityTrusted = false
         _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
