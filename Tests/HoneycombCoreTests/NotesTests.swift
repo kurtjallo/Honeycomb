@@ -59,6 +59,11 @@ struct MarkdownTests {
         #expect(Markdown.inline("use snake_case_names here").count == 1)
     }
 
+    @Test func aListWhoseFirstItemIsIndentedKeepsEveryItem() {
+        #expect(Markdown.document("  - a\n- b\n- c").plainText == "abc")
+        #expect(Markdown.document("  1. x\n\n- y").plainText == "x\ny")
+    }
+
     @Test func documentJSONRoundTrips() throws {
         let doc = Markdown.document("## Hi\n\n- [x] done")
         let decoded = try #require(PMNode.decode(doc.encoded()))
