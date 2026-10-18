@@ -81,6 +81,16 @@ struct DedupeTests {
         #expect(Dedupe.duplicateMeLines(lines) == [1])
     }
 
+    @Test func realRepliesThatRepeatTheirWordsAreKept() {
+        let lines = [
+            TranscriptLine(channel: .them, startMs: 1_000, endMs: 3_000, text: "Can you ship on Friday?"),
+            TranscriptLine(channel: .me, startMs: 3_200, endMs: 4_500, text: "Yes, ship on Friday."),
+            TranscriptLine(channel: .them, startMs: 10_000, endMs: 12_000, text: "We can't ship on Friday, right?"),
+            TranscriptLine(channel: .me, startMs: 12_200, endMs: 14_000, text: "Right, we can ship on Friday."),
+        ]
+        #expect(Dedupe.duplicateMeLines(lines).isEmpty)
+    }
+
     @Test func farApartLinesAreKept() {
         let lines = [
             TranscriptLine(channel: .them, startMs: 1_000, endMs: 2_000, text: "Sounds good to me"),
