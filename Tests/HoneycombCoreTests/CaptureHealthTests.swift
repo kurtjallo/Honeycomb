@@ -178,6 +178,33 @@ struct CaptureHealthTests {
         #expect(machine.health == .lost)
     }
 
+    /// Ticks every 50 ms and answers each restart with a recorder that starts but delivers nothing.
+    mutating func retryWithoutAudio(from: Int64, to: Int64) -> [CaptureCommand] {
+        var commands: [CaptureCommand] = []
+        var now = from
+        while now < to {
+            let step = machine.handle(.tick(atMs: now))
+            commands += step
+            if step.contains(where: { if case .restart = $0 { true } else { false } }) {
+                commands += machine.handle(.restartSucceeded(atMs: now))
+            }
+            now += 50
+        }
+        return commands
+    }
+
+    @Test mutating func lostIsReportedOncePerLoss() {
+        _ = machine.handle(.started(atMs: 0))
+        let firstLoss = retryWithoutAudio(from: 0, to: 60_000).filter { if case .captureLost = $0 { true } else { false } }
+        #expect(firstLoss == [.captureLost(atMs: 22_500)])
+        #expect(machine.health == .lost)
+
+        _ = write(from: 60_000, to: 70_000)
+        #expect(machine.health == .ok)
+        let secondLoss = retryWithoutAudio(from: 70_000, to: 100_000).filter { if case .captureLost = $0 { true } else { false } }
+        #expect(secondLoss == [.captureLost(atMs: 90_400)])
+    }
+
     @Test mutating func silenceOnlyWarns() {
         _ = machine.handle(.started(atMs: 0))
         let silent = write(from: 100, to: 16_200, silent: true)
