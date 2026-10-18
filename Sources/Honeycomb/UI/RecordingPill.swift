@@ -25,7 +25,7 @@ final class RecordingPillController {
             panel.contentView = host
             self.panel = panel
         }
-        guard let panel else { return }
+        guard let panel, !panel.isVisible else { return }
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
             panel.setFrameTopLeftPoint(NSPoint(x: frame.midX - 180, y: frame.maxY - 12))

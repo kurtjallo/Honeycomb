@@ -283,6 +283,7 @@ final class AppModel {
     private func run(_ command: RecordingCommand) {
         switch command {
         case .startCapture(let target):
+            status = RecordingStatus()
             pill.show()
             starting = Task { await openCapture(target) }
         case .cancelStart:
@@ -334,7 +335,6 @@ final class AppModel {
             let (id, session) = try await recorder.start(existing: existing, callApp: callApp) { update in
                 Task { @MainActor [weak self] in self?.apply(update) }
             }
-            status = RecordingStatus()
             statusTask = Task { [weak self] in
                 for await status in session.status { self?.status = status }
             }
