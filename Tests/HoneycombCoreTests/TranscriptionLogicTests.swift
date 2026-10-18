@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import HoneycombCore
 
@@ -71,6 +72,42 @@ struct LineBuilderTests {
     }
 }
 
+struct FinalTranscriberTests {
+    struct FixedRanges: SpeechRangeDetector {
+        let ranges: [(startMs: Int64, endMs: Int64)]
+        func speechRanges(_ samples: [Float]) async throws -> [(startMs: Int64, endMs: Int64)] { ranges }
+    }
+
+    actor CancellingEngine: TranscriptionEngine {
+        nonisolated let engineID = "fake"
+        private(set) var calls = 0
+        func prepare() async throws {}
+        func release() async {}
+        func transcribe(_ samples: [Float]) async throws -> TranscriptPiece {
+            calls += 1
+            withUnsafeCurrentTask { $0?.cancel() }
+            return TranscriptPiece(text: "hello there", words: [])
+        }
+    }
+
+    @Test func cancellingStopsWithinOneSpeechRange() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let writer = try AACSegmentWriter(url: folder.appendingPathComponent("me-0.aac"))
+        var samples = [Float](repeating: 0, count: 48_000)
+        try samples.withUnsafeMutableBufferPointer { try writer.write($0.baseAddress!, count: $0.count) }
+        writer.close()
+        var meta = SessionMeta(meetingID: UUID(), startedAt: Date())
+        meta[.me].segments = [SegmentMeta(file: "me-0.aac", startOffsetMs: 0, frames: writer.frames,
+                                          sampleRate: 16_000, primingFrames: writer.primingFrames)]
+        let engine = CancellingEngine()
+        let detector = FixedRanges(ranges: [(0, 1_000), (1_000, 2_000), (2_000, 3_000)])
+        let pass = Task { try await FinalTranscriber(engine: engine, detector: detector).transcribe(meta: meta, folder: folder) }
+        await #expect(throws: CancellationError.self) { try await pass.value }
+        #expect(await engine.calls == 1)
+    }
+}
+
 struct DedupeTests {
     @Test func echoOnTheMicIsMarked() {
         let lines = [
@@ -79,6 +116,16 @@ struct DedupeTests {
             TranscriptLine(channel: .me, startMs: 5_000, endMs: 7_000, text: "Great, I'll check with the team."),
         ]
         #expect(Dedupe.duplicateMeLines(lines) == [1])
+    }
+
+    @Test func realRepliesThatRepeatTheirWordsAreKept() {
+        let lines = [
+            TranscriptLine(channel: .them, startMs: 1_000, endMs: 3_000, text: "Can you ship on Friday?"),
+            TranscriptLine(channel: .me, startMs: 3_200, endMs: 4_500, text: "Yes, ship on Friday."),
+            TranscriptLine(channel: .them, startMs: 10_000, endMs: 12_000, text: "We can't ship on Friday, right?"),
+            TranscriptLine(channel: .me, startMs: 12_200, endMs: 14_000, text: "Right, we can ship on Friday."),
+        ]
+        #expect(Dedupe.duplicateMeLines(lines).isEmpty)
     }
 
     @Test func farApartLinesAreKept() {
@@ -94,6 +141,20 @@ struct DictionaryCorrectorTests {
     @Test func fixesCloseSpellings() {
         #expect(DictionaryCorrector.correct("I spoke with Dana Leigh today.", terms: ["Dana Lee"]) == "I spoke with Dana Lee today.")
         #expect(DictionaryCorrector.correct("the Kubernetis cluster", terms: ["Kubernetes"]) == "the Kubernetes cluster")
+        #expect(DictionaryCorrector.correct("open Honeycom now", terms: ["Honeycomb"]) == "open Honeycomb now")
+    }
+
+    @Test("fixes a short name one sound off when it is capitalized mid-sentence", arguments: [
+        ("John", "Jon"), ("Jon", "John"), ("Shawn", "Sean"), ("Anna", "Ana"), ("Matt", "Mat"), ("Zoe", "Zoey"),
+    ])
+    func fixesShortNamesMidSentence(heard: String, term: String) {
+        #expect(DictionaryCorrector.correct("I spoke with \(heard) today.", terms: [term]) == "I spoke with \(term) today.")
+    }
+
+    @Test func leavesCommonWordsThatSoundLikeShortNamesAlone() {
+        let text = "It has been a long time, same as when we join calls."
+        #expect(DictionaryCorrector.correct(text, terms: ["Ben", "Tim", "Sam", "Jon"]) == text)
+        #expect(DictionaryCorrector.correct("Time is up. Been there.", terms: ["Tim", "Ben"]) == "Time is up. Been there.")
     }
 
     @Test func leavesOtherWordsAlone() {

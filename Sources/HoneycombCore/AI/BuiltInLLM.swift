@@ -87,7 +87,7 @@ public actor LocalLLM<Runtime: LLMRuntime> {
     func done(_ id: String) async {
         users = max(0, users - 1)
         await host.endUse(.llm(id))
-        if await host.isRecording { runtime.clearCache() }
+        if host.isRecording { runtime.clearCache() }
         scheduleIdleUnload()
     }
 
@@ -110,18 +110,26 @@ public actor LocalLLM<Runtime: LLMRuntime> {
         let task = Task { [store, host, runtime] in
             guard let folder = await store.folder(id) else { throw ModelHostError.modelMissing(id) }
             try await host.register(.llm(id)) { [weak self] in await self?.forceUnload() }
+            let stillWanted = {
+                try Task.checkCancellation()
+                guard await host.canLoad(.llm(id)) else { throw ModelHostError.notAllowedNow }
+            }
             do {
-                return try await runtime.load(from: folder)
+                try await stillWanted()
+                let model = try await runtime.load(from: folder)
+                try await stillWanted()
+                return model
             } catch {
+                runtime.clearCache()
                 await host.unregister(.llm(id))
                 throw error
             }
         }
         loading = (id, task)
         defer { loading = nil }
-        let model = try await task.value
+        let model = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
         loaded = (id, model)
-        runtime.limitCache(recording: await host.isRecording)
+        runtime.limitCache(recording: host.isRecording)
         return model
     }
 
@@ -169,6 +177,8 @@ public struct BuiltInProvider: ChatProvider {
                         }
                     }
                     let input = try await container.prepare(input: UserInput(chat: chat, additionalContext: ["enable_thinking": false]))
+                    // MLX reads the whole prompt before its first token and can't be stopped partway.
+                    try Task.checkCancellation()
                     let parameters = GenerateParameters(maxTokens: request.maxTokens, temperature: Float(request.temperature),
                                                         topP: 0.8, topK: 20, prefillStepSize: 512)
                     var reason = FinishReason.stop

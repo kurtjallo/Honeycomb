@@ -9,13 +9,16 @@ private let chat = ChatRequest(model: "test-model", messages: [ChatMessage(.syst
     @Test("https, and plain http on this Mac or the local network, are allowed", arguments: [
         "https://api.openai.com/v1", "http://localhost:11434", "http://127.0.0.1:1234", "http://[::1]:8080",
         "http://192.168.1.5:1234", "http://10.0.0.2", "http://172.16.0.9", "http://mac.local:11434",
+        "http://0.0.0.0:11434", "http://[fe80::1]:8080", "http://[fe80::1%25en0]:8080", "http://[::ffff:192.168.1.5]:1234",
+        "http://[::ffff:127.0.0.1]:1234",
     ])
     func allows(_ url: String) throws {
         try ProviderURLPolicy.check(#require(URL(string: url)))
     }
 
     @Test("plain http to a public address, or any other scheme, is refused", arguments: [
-        "http://example.com", "http://8.8.8.8", "http://172.32.0.1", "ftp://192.168.1.5",
+        "http://example.com", "http://8.8.8.8", "http://172.32.0.1", "ftp://192.168.1.5", "http://[::ffff:8.8.8.8]",
+        "http://100.64.0.1",
     ])
     func refuses(_ url: String) throws {
         let url = try #require(URL(string: url))
@@ -115,6 +118,14 @@ private struct StreamChat: ChatProvider {
         #expect(ProviderError(code: code)?.code == code, "a stored code reads back")
     }
 
+    @Test("a gateway timeout that says \"too long\" is a transient server error, and a 400 that says it is a too-long prompt")
+    func tooLongNeedsAClientError() {
+        let gateway = ProviderError.from(status: 504, retryAfter: nil, body: "The upstream server took too long to respond.")
+        #expect(gateway == .server(status: 504))
+        #expect(ProviderError.from(status: 400, retryAfter: nil, body: "Prompt is too long: 210000 tokens > 200000 maximum") == .contextTooLong)
+        #expect(ProviderError.from(status: 500, retryAfter: nil, body: "context_length_exceeded") == .contextTooLong)
+    }
+
     @Test("an error object in a stream maps the same way as a failed response")
     func wireErrors() throws {
         let quota = try JSONDecoder().decode(ProviderWireError.self, from: Data(
@@ -183,7 +194,7 @@ private struct StreamChat: ChatProvider {
         #expect(body.model == "test-model" && body.messages == chat.messages && body.maxTokens == 2_000 && body.stream == true)
     }
 
-    @Test("on api.openai.com, max_completion_tokens replaces max_tokens, and reasoning models get no temperature")
+    @Test("on api.openai.com, max_completion_tokens replaces max_tokens, and reasoning models get no temperature and low effort")
     func openAIReasoningModels() async throws {
         let server = StubServer(host: "api.openai.com", .init(body: sse(content("ok"), "[DONE]")))
         let provider = OpenAICompatibleProvider(baseURL: server.url("/v1"), apiKey: "sk-test", isLocal: false, session: server.session)
@@ -195,19 +206,47 @@ private struct StreamChat: ChatProvider {
         let bodies = try server.requests.map(SentBody.init)
         #expect(bodies.map(\.model) == ["gpt-5-mini", "o3", "o4-mini", "gpt-4.1"])
         #expect(bodies.map(\.maxTokens) == [nil, nil, nil, nil])
-        #expect(bodies.map(\.maxCompletionTokens) == [2_000, 2_000, 2_000, 2_000])
+        #expect(bodies.map(\.maxCompletionTokens) == [27_000, 27_000, 27_000, 2_000],
+                "hidden reasoning counts against the limit, so reasoning models get room for it on top of the answer")
+        #expect(bodies.map(\.reasoningEffort) == ["low", "low", "low", nil])
         #expect(bodies.map(\.temperature) == [nil, nil, nil, 0.3])
     }
 
-    @Test("other OpenAI-compatible servers keep max_tokens and temperature, whatever the model is called")
+    @Test("gpt-5 chat variants don't reason, so they get no reasoning_effort or headroom, and keep the fields OpenAI took before",
+          arguments: ["gpt-5-chat-latest", "openai/gpt-5-chat"])
+    func chatVariantsDontReason(model: String) async throws {
+        let server = StubServer(.init(body: sse(content("ok"), "[DONE]")))
+        let provider = OpenAICompatibleProvider(baseURL: server.url("/v1"), apiKey: "sk-test", isLocal: false, session: server.session)
+
+        _ = try await provider.complete(ChatRequest(model: model, messages: chat.messages))
+
+        let body = try SentBody(#require(server.requests.first))
+        #expect(body.reasoningEffort == nil)
+        #expect(body.maxTokens == nil && body.maxCompletionTokens == 2_000 && body.temperature == nil)
+    }
+
+    @Test("other OpenAI-compatible servers keep max_tokens and temperature for models that aren't OpenAI reasoning models")
     func otherServersKeepMaxTokens() async throws {
         let server = StubServer(.init(body: sse(content("ok"), "[DONE]")))
         let provider = OpenAICompatibleProvider(baseURL: server.url("/v1"), apiKey: nil, isLocal: true, session: server.session)
 
-        _ = try await provider.complete(ChatRequest(model: "gpt-5", messages: chat.messages))
+        _ = try await provider.complete(ChatRequest(model: "llama3.2", messages: chat.messages))
 
         let body = try SentBody(#require(server.requests.first))
         #expect(body.maxTokens == 2_000 && body.maxCompletionTokens == nil && body.temperature == 0.3)
+    }
+
+    @Test("OpenAI reasoning models get their parameters through any gateway, such as LiteLLM or OpenRouter",
+          arguments: ["gpt-5", "openai/gpt-5-mini", "o3"])
+    func reasoningModelsThroughGateways(model: String) async throws {
+        let server = StubServer(.init(body: sse(content("ok"), "[DONE]")))
+        let provider = OpenAICompatibleProvider(baseURL: server.url("/v1"), apiKey: "sk-test", isLocal: false, session: server.session)
+
+        _ = try await provider.complete(ChatRequest(model: model, messages: chat.messages))
+
+        let body = try SentBody(#require(server.requests.first))
+        #expect(body.maxTokens == nil && body.maxCompletionTokens == 27_000 && body.temperature == nil)
+        #expect(body.reasoningEffort == "low")
     }
 
     @Test("an Ollama stream drops a <think> block whose tags are split across chunks")
@@ -295,6 +334,7 @@ private struct StreamChat: ChatProvider {
 
     @Test("models() decodes the list and names /v1 once", arguments: [
         ("", "/v1/models"), ("/v1", "/v1/models"), ("/v1/", "/v1/models"), ("/api/v1", "/api/v1/models"),
+        ("/v1/chat/completions", "/v1/models"), ("/api/v1/chat/completions/", "/api/v1/models"),
     ])
     func models(basePath: String, expectedPath: String) async throws {
         let server = StubServer(.init(body: Data(
@@ -333,8 +373,8 @@ private struct StreamChat: ChatProvider {
     @Test("no first token within the policy's budget throws .timedOut")
     func firstTokenTimeout() async {
         let server = StubServer(.init(headers: eventStream, closes: false))
-        var policy = ProviderPolicy(firstToken: .milliseconds(500))
-        policy.connect = .milliseconds(100)
+        var policy = ProviderPolicy(firstToken: .seconds(2))
+        policy.connect = .seconds(1)
         let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: true, session: server.session, policy: policy)
         let start = ContinuousClock.now
 
@@ -342,9 +382,59 @@ private struct StreamChat: ChatProvider {
 
         let elapsed = ContinuousClock.now - start
         #expect(outcome.error == .timedOut)
-        #expect(elapsed >= .milliseconds(500), "headers arrived, so the first-token budget applies, not the connect budget")
-        #expect(elapsed < .seconds(10), "the 500 ms budget applies, not the 120 s local default")
+        #expect(elapsed >= .seconds(2), "headers arrived, so the first-token budget applies, not the connect budget")
+        #expect(elapsed < .seconds(10), "the 2 s budget applies, not the 120 s local default")
         #expect(server.requests.count == 1, "a timeout has used its whole budget, so it is not retried")
+    }
+
+    @Test("a stream that closes with no finish_reason and no [DONE] fails as cut off instead of finishing")
+    func closesUnfinished() async {
+        let server = StubServer(.init(body: sse(content("Half the no"))))
+        let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: true, session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("Half the no")])
+        #expect(outcome.error == .unreachable, "transient, so the job queue retries it later")
+    }
+
+    @Test("a stream that sends its finish_reason but closes before [DONE] still finishes")
+    func finishReasonWithoutDone() async {
+        let server = StubServer(.init(body: sse(content("Notes"), #"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#)))
+        let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: true, session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("Notes"), .finished(.stop)])
+    }
+
+    @Test("a content_filter finish is an error, not a clean stop")
+    func contentFilter() async {
+        let server = StubServer(.init(body: sse(
+            content("Notes"), #"{"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}"#, "[DONE]")))
+        let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: "sk-test", isLocal: false, session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("Notes")])
+        #expect(outcome.error?.code == "refused")
+        #expect(outcome.error?.isTransient == false)
+    }
+
+    @Test("SSE comment lines, such as OpenRouter's while a reasoning model thinks, keep the attempt alive")
+    func commentsKeepTheAttemptAlive() async {
+        let keepAlive = Data(": OPENROUTER PROCESSING\n\n".utf8)
+        let server = StubServer(.init(headers: eventStream, later: Array(repeating: keepAlive, count: 8)
+            + [sse(content("Notes"), #"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#, "[DONE]")],
+            interval: .milliseconds(250)))
+        var policy = ProviderPolicy(firstToken: .seconds(1))
+        policy.silence = .seconds(1)
+        let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: false, session: server.session, policy: policy)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.error == nil, "2.25 s of comments 250 ms apart outlast a 1 s budget only if each one counts")
+        #expect(outcome.deltas == [.text("Notes"), .finished(.stop)])
     }
 
     @Test("silence after text throws .timedOut and keeps the text")
@@ -421,6 +511,44 @@ private struct StreamChat: ChatProvider {
         #expect(body.maxTokens == 2_000 && body.stream == true)
     }
 
+    @Test("a stream that closes with no stop_reason and no message_stop fails as cut off instead of finishing")
+    func closesUnfinished() async {
+        let server = StubServer(.init(body: Data("""
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Half"}}
+
+
+            """.utf8)))
+        let provider = AnthropicProvider(apiKey: "sk-ant-test", baseURL: server.url(), session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("Half")])
+        #expect(outcome.error == .unreachable)
+    }
+
+    @Test("a refusal stop is an error, not a clean stop")
+    func refusal() async {
+        let server = StubServer(.init(body: Data("""
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}}
+
+            event: message_delta
+            data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+
+
+            """.utf8)))
+        let provider = AnthropicProvider(apiKey: "sk-ant-test", baseURL: server.url(), session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("I")])
+        #expect(outcome.error?.code == "refused")
+    }
+
     @Test("an overloaded_error event maps to .rateLimited")
     func overloaded() async {
         let server = StubServer(.init(body: Data("""
@@ -439,7 +567,7 @@ private struct StreamChat: ChatProvider {
         #expect(outcome.error == .rateLimited(retryAfter: nil))
     }
 
-    @Test("models() decodes the list, names /v1 once, and asks for every model in one page", arguments: ["", "/v1"])
+    @Test("models() decodes the list, names /v1 once, and asks for every model in one page", arguments: ["", "/v1", "/v1/messages"])
     func models(basePath: String) async throws {
         let server = StubServer(.init(body: Data(
             #"{"data":[{"type":"model","id":"claude-sonnet-4-5","display_name":"Claude Sonnet 4.5"}],"has_more":false}"#.utf8)))
@@ -489,6 +617,7 @@ private struct SentBody: Decodable {
     var input: [String]?
     var maxTokens: Int?
     var maxCompletionTokens: Int?
+    var reasoningEffort: String?
     var temperature: Double?
     var stream: Bool?
 
@@ -519,12 +648,18 @@ struct StubServer {
     }
 }
 
+private struct Unchecked<Value>: @unchecked Sendable {
+    let value: Value
+}
+
 /// Answers each request with the host's next reply. The last reply repeats.
 final class Stub: URLProtocol {
     struct Reply: Sendable {
         var status = 200
         var headers: [String: String] = [:]
         var body = Data()
+        var later: [Data] = []
+        var interval: Duration = .milliseconds(100)
         var closes = true
     }
 
@@ -555,7 +690,18 @@ final class Stub: URLProtocol {
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if !reply.body.isEmpty { client?.urlProtocol(self, didLoad: reply.body) }
-        if reply.closes { client?.urlProtocolDidFinishLoading(self) }
+        guard !reply.later.isEmpty else {
+            if reply.closes { client?.urlProtocolDidFinishLoading(self) }
+            return
+        }
+        let loader = Unchecked(value: self)
+        Task {
+            for piece in reply.later {
+                try? await Task.sleep(for: reply.interval)
+                loader.value.client?.urlProtocol(loader.value, didLoad: piece)
+            }
+            if reply.closes { loader.value.client?.urlProtocolDidFinishLoading(loader.value) }
+        }
     }
 
     override func stopLoading() {}

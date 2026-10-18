@@ -40,7 +40,8 @@ public actor Pipeline {
     private var handlers = Handlers()
     private var loop: Task<Void, Never>?
     private var wake: CheckedContinuation<Void, Never>?
-    private var current: (job: Job, task: Task<Void, Error>, again: Bool)?
+    /// `onThisMac` is decided at claim, so a route changed while the job runs doesn't hide it from a recording.
+    private var current: (job: Job, onThisMac: Bool, task: Task<Void, Error>, again: Bool)?
 
     public init(database: AppDatabase, paths: Paths, host: ModelHost, policy: Policy = Policy()) {
         self.database = database
@@ -60,11 +61,15 @@ public actor Pipeline {
         loop = Task { await self.run() }
     }
 
-    /// Ends the loop. The job in progress stops and goes back in the queue.
+    /// Ends the loop. The job in progress stops and goes back in the queue at once, without using
+    /// an attempt.
     public func stop() {
         loop?.cancel()
         loop = nil
-        current?.task.cancel()
+        if let current {
+            current.task.cancel()
+            try? database.deferJob(current.job, until: Date())
+        }
         nudge()
     }
 
@@ -88,10 +93,28 @@ public actor Pipeline {
         wake = nil
     }
 
-    /// A new recording takes priority: model work in progress stops and goes back in the queue.
+    /// A new recording takes priority: model work in progress on this Mac stops and goes back in the queue.
     public func recordingStarted() {
-        guard let current, current.job.kind != .finalizeAudio else { return }
+        guard let current, current.onThisMac else { return }
         current.task.cancel()
+    }
+
+    private func usesThisMac(_ kind: JobKind) -> Bool {
+        switch kind {
+        case .finalizeAudio, .mirrorMarkdown: false
+        case .transcribeFinal, .index, .sourceLink: true
+        case .enhance:
+            (try? database.route(.enhance)).flatMap { try? database.provider($0.providerId) }.map(Self.runsOnThisMac) ?? true
+        }
+    }
+
+    static func runsOnThisMac(_ provider: ProviderRecord) -> Bool {
+        if provider.kind == .builtin { return true }
+        guard var host = provider.baseUrl.flatMap(URL.init(string:))?.host(percentEncoded: false)?.lowercased() else { return false }
+        if host.hasSuffix(".") { host.removeLast() }
+        if ["localhost", "::1", "0.0.0.0"].contains(host) { return true }
+        let octets = host.split(separator: ".")
+        return octets.count == 4 && octets.first == "127" && octets.allSatisfy { UInt8($0) != nil }
     }
 
     private func recover() {
@@ -105,6 +128,11 @@ public actor Pipeline {
                 }
                 Log.info("pipeline.recovered_meeting", ["meeting": .id(meeting.id)])
             }
+            for meeting in try database.meetings(in: [.transcribing])
+            where try !database.jobs(for: meeting.id).contains(where: { [.queued, .running].contains($0.status) }) {
+                try database.enqueue(.finalizeAudio, meeting: meeting.id)
+                Log.info("pipeline.recovered_meeting", ["meeting": .id(meeting.id)])
+            }
         } catch {
             Log.error("pipeline.recovery_failed")
         }
@@ -112,22 +140,28 @@ public actor Pipeline {
 
     private func run() async {
         while true {
-            let recording = await host.isRecording
             if Task.isCancelled { return }
-            // Model jobs wait while a call is being recorded. Only audio repair runs.
-            let skipping: Set<JobKind> = recording ? Set(JobKind.allCases).subtracting([.finalizeAudio, .mirrorMarkdown]) : []
-            guard let job = try? database.claimNextJob(skipping: skipping) else {
+            guard let (job, task) = claimNextJob() else {
                 await sleep(for: .seconds(policy.idlePoll))
                 continue
             }
-            let task = Task { try await self.perform(job) }
-            current = (job, task, false)
             let result = await task.result
             let again = current?.again == true
             current = nil
             finish(job, result: result)
             if again, let meeting = job.meetingId { enqueue(job.kind, meeting: meeting) }
         }
+    }
+
+    /// Synchronous, so no suspension point can fall between reading the recording gate and making the
+    /// job `current`: a recording that starts at any moment either keeps model jobs from being
+    /// claimed or finds the job to cancel in `recordingStarted()`.
+    private func claimNextJob() -> (Job, Task<Void, Error>)? {
+        let onThisMac = Set(JobKind.allCases.filter(usesThisMac))
+        guard let job = try? database.claimNextJob(skipping: host.gate.isRecording ? onThisMac : []) else { return nil }
+        let task = Task { try await self.perform(job) }
+        current = (job, onThisMac.contains(job.kind), task, false)
+        return (job, task)
     }
 
     private func sleep(for duration: Duration) async {
@@ -230,12 +264,7 @@ public actor Pipeline {
             }
         }
         try database.replaceGaps(gaps, meeting: id)
-        if var meeting = try database.meeting(id) {
-            meeting.state = .transcribing
-            meeting.durationMs = meeting.durationMs ?? meta.durationMs
-            meeting.endAt = meeting.endAt ?? meta.endedAt
-            try database.save(meeting)
-        }
+        try database.recordingStopped(id, endAt: meta.endedAt, durationMs: meta.durationMs)
     }
 
     private func transcribeFinal(_ id: UUID) async throws {
@@ -278,7 +307,8 @@ public actor Pipeline {
     }
 
     public func retry(_ meeting: UUID) {
-        let next: JobKind = ((try? database.transcript(meeting).isEmpty) ?? true) ? .finalizeAudio : .enhance
+        let hasFinal = (try? database.transcript(meeting).contains { $0.pass == .final }) ?? false
+        let next: JobKind = hasFinal ? .enhance : .finalizeAudio
         enqueue(next, meeting: meeting)
     }
 }

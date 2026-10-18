@@ -1,0 +1,240 @@
+import Foundation
+import Testing
+@testable import HoneycombCore
+
+struct RecordingLifecycleTests {
+    var lifecycle = RecordingLifecycle()
+    let meeting = UUID()
+    static let zoom = CallApp(bundleId: "us.zoom.xos", name: "Zoom", kind: .app)
+
+    static func prompt(replacing: Bool) -> CallPrompt {
+        CallPrompt(key: "zoom-1", app: zoom, kind: .app("Zoom"), replacesRecording: replacing)
+    }
+
+    mutating func recording(_ target: StartTarget = .newMeeting) {
+        #expect(lifecycle.handle(.start(target)) == [.startCapture(target)])
+        #expect(lifecycle.handle(.captureOpened(meetingID: meeting))
+            == [.began(ActiveRecording(meetingID: meeting, callKey: target.callKey))])
+    }
+
+    @Test mutating func aSecondStopDoesNothing() {
+        recording()
+        #expect(lifecycle.handle(.stop) == [.stopCapture])
+        #expect(lifecycle.phase.isStopping)
+        #expect(lifecycle.handle(.stop).isEmpty)
+        #expect(lifecycle.phase.meetingID == meeting, "the stopping meeting stays shown until its stop finishes")
+        #expect(lifecycle.handle(.stopFinished).isEmpty)
+        #expect(lifecycle.phase == .idle)
+    }
+
+    @Test mutating func aManualStartDuringAStopIsIgnored() {
+        recording()
+        _ = lifecycle.handle(.stop)
+        #expect(lifecycle.handle(.start(.newMeeting)).isEmpty)
+        _ = lifecycle.handle(.stopFinished)
+        #expect(lifecycle.phase == .idle)
+    }
+
+    @Test mutating func aPromptClickedDuringAStopStartsWhenTheStopEnds() {
+        recording()
+        _ = lifecycle.handle(.stop)
+        let call = StartTarget.call(Self.prompt(replacing: false))
+        #expect(lifecycle.handle(.start(call)).isEmpty, "the stop already running is not started twice")
+        #expect(lifecycle.handle(.stopFinished) == [.startCapture(call)])
+        #expect(lifecycle.phase.isStarting)
+    }
+
+    @Test mutating func aStartRecordsIntoTheSelectedDraft() {
+        let draft = UUID()
+        #expect(lifecycle.handle(.start(.draft(draft))) == [.startCapture(.draft(draft))])
+        #expect(lifecycle.phase.isStarting)
+        #expect(lifecycle.handle(.start(.newMeeting)).isEmpty, "a second click while starting does nothing")
+    }
+
+    @Test mutating func resumingDuringTheCountdownCancelsIt() {
+        recording()
+        #expect(lifecycle.handle(.callEnded(atMs: 1_000)) == [.pauseCapture])
+        #expect(lifecycle.secondsUntilAutoStop(atMs: 1_000) == 8)
+        #expect(lifecycle.secondsUntilAutoStop(atMs: 8_500) == 1)
+        #expect(lifecycle.handle(.resume) == [.resumeCapture])
+        #expect(lifecycle.secondsUntilAutoStop(atMs: 2_000) == nil)
+        #expect(lifecycle.handle(.tick(atMs: 60_000)).isEmpty)
+        #expect(lifecycle.phase == .recording(ActiveRecording(meetingID: meeting, callKey: nil)))
+    }
+
+    @Test mutating func theCountdownStopsTheRecording() {
+        recording()
+        _ = lifecycle.handle(.callEnded(atMs: 1_000))
+        #expect(lifecycle.handle(.tick(atMs: 8_500)).isEmpty)
+        #expect(lifecycle.handle(.tick(atMs: 9_000)) == [.stopCapture])
+        #expect(lifecycle.handle(.tick(atMs: 9_500)).isEmpty)
+    }
+
+    @Test mutating func theCallComingBackResumesAnAutomaticPause() {
+        recording(.call(Self.prompt(replacing: false)))
+        _ = lifecycle.handle(.callEnded(atMs: 0))
+        #expect(lifecycle.handle(.callResumed) == [.resumeCapture])
+        #expect(lifecycle.handle(.tick(atMs: 60_000)).isEmpty)
+        #expect(!lifecycle.phase.isPaused)
+    }
+
+    @Test mutating func theCallComingBackLeavesAManualPauseAlone() {
+        recording()
+        #expect(lifecycle.handle(.pause) == [.pauseCapture])
+        #expect(lifecycle.handle(.callEnded(atMs: 0)).isEmpty, "capture is already paused")
+        #expect(lifecycle.handle(.callResumed).isEmpty)
+        #expect(lifecycle.phase == .paused(ActiveRecording(meetingID: meeting, callKey: nil)))
+        #expect(lifecycle.handle(.tick(atMs: 60_000)).isEmpty, "the countdown was cancelled")
+        #expect(lifecycle.handle(.callResumed).isEmpty)
+    }
+
+    @Test mutating func aManualPauseStillStopsWhenTheCallEnds() {
+        recording()
+        _ = lifecycle.handle(.pause)
+        _ = lifecycle.handle(.callEnded(atMs: 0))
+        #expect(lifecycle.handle(.tick(atMs: 8_000)) == [.stopCapture])
+    }
+
+    @Test mutating func aFailedResumeGoesBackToPaused() {
+        recording()
+        _ = lifecycle.handle(.pause)
+        #expect(lifecycle.handle(.resume) == [.resumeCapture])
+        #expect(lifecycle.handle(.resumeFailed) == [.alert(.captureFailed)])
+        #expect(lifecycle.phase.isPaused)
+    }
+
+    @Test mutating func aFailedResumeAfterTheCallCameBackStaysPaused() {
+        recording()
+        _ = lifecycle.handle(.callEnded(atMs: 0))
+        #expect(lifecycle.handle(.callResumed) == [.resumeCapture])
+        #expect(lifecycle.handle(.resumeFailed) == [.alert(.captureFailed)])
+        #expect(lifecycle.phase == .paused(ActiveRecording(meetingID: meeting, callKey: nil)))
+    }
+
+    @Test mutating func aFailedCaptureReturnsToIdle() {
+        _ = lifecycle.handle(.start(.newMeeting))
+        #expect(lifecycle.phase.holdsModels)
+        #expect(lifecycle.handle(.captureFailed(.micDenied)) == [.alert(.micDenied)])
+        #expect(lifecycle.phase == .idle)
+        #expect(!lifecycle.phase.holdsModels)
+        #expect(lifecycle.handle(.start(.newMeeting)) == [.startCapture(.newMeeting)])
+    }
+
+    @Test mutating func aPromptCanReplaceTheRecording() {
+        recording()
+        #expect(lifecycle.handle(.start(.call(Self.prompt(replacing: false)))).isEmpty)
+        let prompt = Self.prompt(replacing: true)
+        #expect(lifecycle.handle(.start(.call(prompt))) == [.stopCapture])
+        #expect(lifecycle.handle(.stopFinished) == [.startCapture(.call(prompt))])
+        #expect(lifecycle.phase.holdsModels, "the models stay held between the two recordings")
+    }
+
+    @Test mutating func quitWhileIdleQuitsAtOnce() {
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.quit])
+        #expect(lifecycle.handle(.start(.newMeeting)).isEmpty, "nothing starts once the app is quitting")
+    }
+
+    @Test mutating func quitWhileRecordingAsksThenStopsFirst() {
+        recording()
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
+        #expect(lifecycle.handle(.quitCancelled) == [.cancelQuit])
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
+        #expect(lifecycle.handle(.quitConfirmed(atMs: 0)) == [.stopCapture])
+        #expect(lifecycle.handle(.stopFinished) == [.quit])
+    }
+
+    @Test mutating func quitWhilePausedOrCountingDownAsks() {
+        recording()
+        _ = lifecycle.handle(.pause)
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
+        _ = lifecycle.handle(.callEnded(atMs: 0))
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
+    }
+
+    @Test mutating func quitWhileStartingCancelsTheStart() {
+        _ = lifecycle.handle(.start(.newMeeting))
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
+        #expect(lifecycle.handle(.quitConfirmed(atMs: 0)) == [.cancelStart])
+        #expect(lifecycle.handle(.captureFailed(nil)) == [.quit], "a cancelled start shows no alert")
+    }
+
+    @Test mutating func quitWhileStartingStopsACaptureThatOpenedAnyway() {
+        _ = lifecycle.handle(.start(.newMeeting))
+        _ = lifecycle.handle(.quitConfirmed(atMs: 0))
+        #expect(lifecycle.handle(.captureOpened(meetingID: meeting)) == [.stopCapture])
+        #expect(lifecycle.handle(.stopFinished) == [.quit])
+    }
+
+    @Test mutating func quitWhileStoppingWaitsForTheStop() {
+        recording()
+        _ = lifecycle.handle(.stop)
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)).isEmpty)
+        #expect(lifecycle.handle(.stopFinished) == [.quit])
+    }
+
+    @Test func theModelsStayHeldFromTheStopUntilTheAppExits() {
+        let meeting = UUID()
+        let paths: [[RecordingEvent]] = [
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .quitConfirmed(atMs: 0), .stopFinished],
+            [.start(.newMeeting), .quitConfirmed(atMs: 0), .captureFailed(nil)],
+            [.start(.newMeeting), .quitConfirmed(atMs: 0), .captureOpened(meetingID: meeting), .stopFinished],
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .stop, .quitRequested(atMs: 0), .stopFinished],
+            [.quitRequested(atMs: 0)],
+        ]
+        for events in paths {
+            var lifecycle = RecordingLifecycle()
+            for event in events { _ = lifecycle.handle(event) }
+            #expect(lifecycle.phase == .quitting(byMs: RecordingPolicy().quitDeadlineMs))
+            #expect(lifecycle.phase.holdsModels, "no model job starts while the app quits: \(events)")
+        }
+    }
+
+    @Test func aQuitEndsByTheDeadlineWhateverStillHangs() {
+        let meeting = UUID()
+        let deadline = 1_000 + RecordingPolicy().quitDeadlineMs
+        let hangs: [[RecordingEvent]] = [
+            [.start(.newMeeting), .quitConfirmed(atMs: 1_000)],
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .quitConfirmed(atMs: 1_000)],
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .stop, .quitRequested(atMs: 1_000)],
+            [.quitRequested(atMs: 1_000)],
+            [.start(.newMeeting), .quitConfirmed(atMs: 1_000), .captureFailed(nil)],
+        ]
+        for events in hangs {
+            var lifecycle = RecordingLifecycle()
+            for event in events { _ = lifecycle.handle(event) }
+            #expect(lifecycle.handle(.quitRequested(atMs: 3_000)).isEmpty, "a second Quit doesn't move the deadline")
+            #expect(lifecycle.handle(.tick(atMs: deadline - 1)).isEmpty)
+            #expect(lifecycle.handle(.tick(atMs: deadline)) == [.quitNow], "the app exits even though \(events) never finished")
+            #expect(lifecycle.phase == .quitting(byMs: deadline))
+        }
+    }
+
+    @Test func onlyAStartClickOpensCapture() {
+        var generator = SplitMix(seed: 7)
+        let events: [RecordingEvent] = [
+            .stop, .pause, .resume, .quitCancelled, .callEnded(atMs: 0), .callResumed, .tick(atMs: 100_000),
+            .captureOpened(meetingID: UUID()), .captureFailed(.captureFailed), .resumeFailed, .stopFinished,
+        ]
+        for _ in 0..<200 {
+            var lifecycle = RecordingLifecycle()
+            for _ in 0..<50 {
+                let commands = lifecycle.handle(events[Int(generator.next() % UInt64(events.count))])
+                #expect(!commands.contains { if case .startCapture = $0 { true } else { false } })
+            }
+        }
+    }
+}
+
+struct SplitMix {
+    var state: UInt64
+
+    init(seed: UInt64) { state = seed }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+}

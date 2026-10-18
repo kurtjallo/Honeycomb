@@ -62,6 +62,8 @@ public struct CaptureHealthMachine: Sendable {
     private var silenceSinceMs: Int64?
     private var silenceWarned = false
     private var pausedAtMs: Int64?
+    private var staleBeforeMs: Int64?
+    private var lossReported = false
 
     public init(policy: CapturePolicy = .standard) {
         self.policy = policy
@@ -76,17 +78,20 @@ public struct CaptureHealthMachine: Sendable {
         switch event {
         case .started(let now):
             phase = .starting(sinceMs: now)
+            staleBeforeMs = now
             pausedAtMs = nil
             silenceSinceMs = nil
             return []
 
         case .wrote(let now, let silent):
+            if let staleBeforeMs, now <= staleBeforeMs { return [] }
             var commands = trackSilence(now: now, silent: silent)
             lastWriteMs = now
             switch phase {
             case .starting, .lost: phase = .running
             default: break
             }
+            if phase == .running { lossReported = false }
             if openInterruption != nil, openInterruption?.resumedAtMs == nil, phase == .running {
                 openInterruption?.resumedAtMs = now
             }
@@ -95,9 +100,9 @@ public struct CaptureHealthMachine: Sendable {
 
         case .routeChanged(let now):
             switch phase {
-            case .idle, .paused, .restarting, .waitingToRestart:
+            case .idle, .paused, .starting, .restarting, .waitingToRestart:
                 return []
-            case .starting, .running, .debouncingRoute:
+            case .running, .debouncingRoute:
                 phase = .debouncingRoute(untilMs: now + policy.routeDebounceMs)
                 return []
             case .lost:
@@ -117,11 +122,13 @@ public struct CaptureHealthMachine: Sendable {
         case .restartSucceeded(let now):
             guard case .restarting = phase else { return [] }
             phase = .starting(sinceMs: now)
+            staleBeforeMs = now
             openInterruption?.resumedAtMs = nil
             return []
 
         case .restartFailed(let now):
             guard case .restarting = phase else { return [] }
+            staleBeforeMs = now
             return scheduleRestart(now: now)
 
         case .paused(let now):
@@ -200,10 +207,11 @@ public struct CaptureHealthMachine: Sendable {
             phase = .waitingToRestart(attempt: attempt, atMs: now + policy.restartDelaysMs[used])
             return tick(now: now)
         }
-        let alreadyLost = if case .lost = phase { true } else { false }
         phase = .lost(retryAtMs: now + policy.lostRetryMs)
         openInterruption?.resumedAtMs = nil
-        return alreadyLost ? [] : [.captureLost(atMs: now)]
+        guard !lossReported else { return [] }
+        lossReported = true
+        return [.captureLost(atMs: now)]
     }
 
     private mutating func checkRecovered(now: Int64) -> [CaptureCommand] {

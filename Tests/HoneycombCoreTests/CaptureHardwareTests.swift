@@ -21,7 +21,7 @@ struct CaptureHardwareTests {
         let scenario = env["HONEYCOMB_CAPTURE_SCENARIO"] ?? "app"
         let seconds = Int(env["HONEYCOMB_CAPTURE_SECONDS"] ?? "") ?? 20
         let picked = InputDevicePicker.pick(devices: InputDevices.all(), defaultInput: InputDevices.defaultInput,
-                                            callAppInputs: InputDevices.inputsInUse(preferring: []))
+                                            callAppInputs: InputDevices.inputsInUse(of: []))
         let stages: [[any TrackRecorder]] = switch scenario {
         case "app": [[MicRecorder(deviceID: picked?.id), SystemAudioRecorder()]]
         case "mic-picked": [[MicRecorder(deviceID: picked?.id)]]

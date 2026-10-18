@@ -14,6 +14,21 @@ struct DetectionTests {
         return commands
     }
 
+    mutating func ticks(_ from: Int64, _ to: Int64, answering titles: [String]) -> [DetectionCommand] {
+        var commands: [DetectionCommand] = []
+        var now = from
+        while now <= to {
+            for command in machine.handle(.tick(atMs: now)) {
+                commands.append(command)
+                if case .readTitle(let key, _) = command {
+                    commands += machine.handle(.titleRead(key: key, titles: titles))
+                }
+            }
+            now += 500
+        }
+        return commands
+    }
+
     func shown(_ commands: [DetectionCommand]) -> [CallPrompt] {
         commands.compactMap { if case .show(let prompt) = $0 { prompt } else { nil } }
     }
@@ -41,15 +56,52 @@ struct DetectionTests {
     @Test mutating func browserHelperReadsTheTabTitle() {
         _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome.helper", atMs: 0))
         #expect(ticks(0, 3_000) == [.readTitle(key: "1", bundleID: "com.google.Chrome")])
-        let prompts = shown(machine.handle(.titleRead(key: "1", title: "Meet - abc-defg-hij")))
+        let prompts = shown(machine.handle(.titleRead(key: "1", titles: ["Meet - abc-defg-hij"])))
         #expect(prompts.map(\.kind) == [.site("Google Meet")])
+    }
+
+    @Test mutating func aMeetingInAWindowBehindTheFocusedOnePrompts() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
+        _ = ticks(0, 3_000)
+        let prompts = shown(machine.handle(.titleRead(key: "1", titles: ["Inbox", "Meet - abc-defg-hij"])))
+        #expect(prompts.map(\.kind) == [.site("Google Meet")])
+    }
+
+    @Test mutating func aSlowTitleReadIsNotSentTwice() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
+        #expect(ticks(0, 3_000).count == 1)
+        #expect(ticks(3_500, 20_000).isEmpty)
+        let prompts = shown(machine.handle(.titleRead(key: "1", titles: ["Meet - abc-defg-hij"])))
+        #expect(prompts.map(\.kind) == [.site("Google Meet")])
+    }
+
+    @Test mutating func aTitleThatArrivesAfterTheMicStoppedIsIgnored() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
+        _ = ticks(0, 3_000)
+        _ = machine.handle(.micStopped(key: "1", atMs: 3_200))
+        #expect(machine.handle(.titleRead(key: "1", titles: ["Meet - abc-defg-hij"])).isEmpty)
+    }
+
+    @Test mutating func safariRecordsFromWebKitsGPUProcess() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.apple.WebKit.GPU", atMs: 0))
+        #expect(ticks(0, 3_000) == [.readTitle(key: "1", bundleID: "com.apple.Safari")])
     }
 
     @Test mutating func chatGPTVoiceInABrowserIsQuiet() {
         _ = machine.handle(.micStarted(key: "1", bundleID: "company.thebrowser.Browser", atMs: 0))
+        let commands = ticks(0, 62_500, answering: ["ChatGPT"])
+        #expect(shown(commands).isEmpty)
+        #expect(commands.count == 30, "one read at 3 s, then one every 2 s through 61 s")
+        #expect(ticks(63_000, 200_000, answering: ["Meet - abc-defg-hij"]).isEmpty, "gave up a minute after the first read")
+    }
+
+    @Test mutating func aMeetingTabOpenedAfterTheMicStartsStillPrompts() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
         _ = ticks(0, 3_000)
-        #expect(machine.handle(.titleRead(key: "1", title: "ChatGPT")).isEmpty)
-        #expect(ticks(3_500, 60_000).isEmpty)
+        _ = machine.handle(.titleRead(key: "1", titles: ["New Tab"]))
+        #expect(ticks(3_500, 5_000) == [.readTitle(key: "1", bundleID: "com.google.Chrome")])
+        let prompts = shown(machine.handle(.titleRead(key: "1", titles: ["Meet - abc-defg-hij"])))
+        #expect(prompts.map(\.kind) == [.site("Google Meet")])
     }
 
     @Test mutating func browserWithoutAccessibilityGetsTheGenericPrompt() {
@@ -96,6 +148,27 @@ struct DetectionTests {
         _ = machine.handle(.micStopped(key: "1", atMs: 10_000))
         _ = machine.handle(.micStarted(key: "2", bundleID: "us.zoom.xos", atMs: 12_000))
         #expect(ticks(12_000, 30_000).isEmpty)
+    }
+
+    @Test mutating func micComingBackAfterTheCallEndedResumes() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "us.zoom.xos", atMs: 0))
+        _ = ticks(0, 3_000)
+        _ = machine.handle(.startNotes(key: "1"))
+        _ = machine.handle(.recordingStarted(key: "1"))
+        _ = machine.handle(.micStopped(key: "1", atMs: 10_000))
+        #expect(ticks(10_000, 15_000) == [.callEnded])
+        #expect(machine.handle(.micStarted(key: "2", bundleID: "us.zoom.xos", atMs: 16_000)) == [.callResumed])
+        _ = machine.handle(.micStopped(key: "2", atMs: 20_000))
+        #expect(ticks(20_000, 25_000) == [.callEnded], "the call can end again")
+    }
+
+    @Test mutating func aPromptStartThatFailedNeverAutoStopsALaterRecording() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "us.zoom.xos", atMs: 0))
+        _ = ticks(0, 3_000)
+        _ = machine.handle(.startNotes(key: "1"))
+        _ = machine.handle(.recordingStarted(key: nil))
+        _ = machine.handle(.micStopped(key: "1", atMs: 60_000))
+        #expect(!ticks(60_000, 70_000).contains(.callEnded))
     }
 
     @Test mutating func manualRecordingNeverAutoStops() {

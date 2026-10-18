@@ -17,16 +17,24 @@ public enum ProviderURLPolicy {
         if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
         if host.hasSuffix(".") { host.removeLast() }
         if host == "localhost" || host.hasSuffix(".local") { return true }
-        if let bytes = address(host, family: AF_INET, size: 4) {
-            switch (bytes[0], bytes[1]) {
-            case (127, _), (10, _), (172, 16...31), (192, 168), (169, 254): return true
-            default: return false
-            }
-        }
-        if let bytes = address(host, family: AF_INET6, size: 16) {
-            return bytes == [UInt8](repeating: 0, count: 15) + [1] || bytes[0] & 0xFE == 0xFC
+        if let bytes = address(host, family: AF_INET, size: 4) { return isPrivate(ipv4: bytes) }
+        // A link-local address names its interface after a `%`, which inet_pton doesn't read.
+        let unscoped = String(host.prefix { $0 != "%" })
+        if let bytes = address(unscoped, family: AF_INET6, size: 16) {
+            if bytes[..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xFF, bytes[11] == 0xFF { return isPrivate(ipv4: Array(bytes[12...])) }
+            return bytes == [UInt8](repeating: 0, count: 15) + [1]
+                || bytes[0] & 0xFE == 0xFC
+                || (bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80)
         }
         return false
+    }
+
+    /// 0.0.0.0 reaches this Mac, as servers that listen on every interface print it.
+    private static func isPrivate(ipv4 bytes: [UInt8]) -> Bool {
+        switch (bytes[0], bytes[1]) {
+        case (127, _), (10, _), (172, 16...31), (192, 168), (169, 254): true
+        default: bytes == [0, 0, 0, 0]
+        }
     }
 
     private static func address(_ host: String, family: Int32, size: Int) -> [UInt8]? {
@@ -80,6 +88,7 @@ extension ProviderError {
         default: break
         }
         if contextLimitPhrases.contains(where: { body.contains($0) }) { return .contextTooLong }
+        if (400..<500).contains(status), body.contains("too long") { return .contextTooLong }
         if body.contains("overloaded_error") { return .rateLimited(retryAfter: retryAfter) }
         switch status {
         case 400..<500: return .badRequest
@@ -88,7 +97,7 @@ extension ProviderError {
         }
     }
 
-    private static let contextLimitPhrases = ["context length", "context_length", "maximum context", "context window", "too long"]
+    private static let contextLimitPhrases = ["context length", "context_length", "maximum context", "context window"]
     private static let creditPhrases = ["credit balance", "insufficient_quota"]
 
     /// Every failure leaves a provider as a `ProviderError`, so the UI has one message per case.
@@ -446,7 +455,6 @@ protocol ChatStreamDecoder: Sendable {
     init()
     /// A `.finished` delta ends the stream.
     mutating func decode(_ event: SSEEvent) throws -> [ChatDelta]
-    /// The deltas to send when the server closes the stream without finishing it.
     mutating func end() -> [ChatDelta]
 }
 
@@ -562,18 +570,22 @@ struct ProviderTransport: Sendable {
                                            into continuation: AsyncThrowingStream<ChatDelta, any Error>.Continuation) async throws {
         var decoder = D()
         var sawEvent = false
-        for try await event in ServerSentEvents(bytes: try await open(request, tracker: tracker)) {
+        // Every line counts as life, comments included: OpenRouter sends only ": OPENROUTER PROCESSING"
+        // while a reasoning model thinks, and other servers send ": ping".
+        let bytes = try await open(request, tracker: tracker).map { byte in
+            if byte == UInt8(ascii: "\n") || byte == UInt8(ascii: "\r") { tracker.receivedEvent() }
+            return byte
+        }
+        for try await event in ServerSentEvents(bytes: bytes) {
             sawEvent = true
-            tracker.receivedEvent()
             if send(try decoder.decode(event), to: continuation, tracker: tracker) { return }
         }
         // A 200 with no events at all would otherwise read as an empty answer.
         guard sawEvent else { throw ProviderError.invalidResponse }
-        send(decoder.end(), to: continuation, tracker: tracker)
+        guard send(decoder.end(), to: continuation, tracker: tracker) else { throw ProviderError.unreachable }
     }
 
     /// Returns true once the stream has finished.
-    @discardableResult
     private func send(_ deltas: [ChatDelta], to continuation: AsyncThrowingStream<ChatDelta, any Error>.Continuation,
                       tracker: AttemptTracker) -> Bool {
         for delta in deltas {

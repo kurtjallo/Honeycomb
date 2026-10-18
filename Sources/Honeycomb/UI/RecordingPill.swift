@@ -20,12 +20,12 @@ final class RecordingPillController {
             panel.backgroundColor = .clear
             panel.hasShadow = true
             panel.hidesOnDeactivate = false
-            let host = NSHostingView(rootView: RecordingPill().environment(model).honeycombAppearance())
+            let host = NSHostingView(rootView: RecordingPill().environment(model))
             host.sizingOptions = [.preferredContentSize]
             panel.contentView = host
             self.panel = panel
         }
-        guard let panel else { return }
+        guard let panel, !panel.isVisible else { return }
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
             panel.setFrameTopLeftPoint(NSPoint(x: frame.midX - 180, y: frame.maxY - 12))
@@ -88,13 +88,13 @@ struct RecordingPill: View {
                 }
                 Spacer(minLength: 0)
                 Button {
-                    Task { await model.pauseOrResume() }
+                    model.pauseOrResume()
                 } label: {
                     Image(systemName: model.status.isPaused ? "play.fill" : "pause.fill")
                 }
                 .help(model.status.isPaused ? "Resume" : "Pause")
                 Button {
-                    Task { await model.stopRecording() }
+                    model.stopRecording()
                 } label: {
                     Image(systemName: "stop.fill")
                 }

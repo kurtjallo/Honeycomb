@@ -67,7 +67,7 @@ private struct AnthropicStreamDecoder: ChatStreamDecoder {
 
     /// `model_context_window_exceeded` also cuts the answer short, so it is marked truncated too.
     private static let truncatedStops: Set = ["max_tokens", "model_context_window_exceeded"]
-    private var finish = FinishReason.stop
+    private var finish: FinishReason?
 
     mutating func decode(_ event: SSEEvent) throws -> [ChatDelta] {
         let event = try ProviderTransport.decode(Event.self, from: Data(event.data.utf8))
@@ -75,10 +75,14 @@ private struct AnthropicStreamDecoder: ChatStreamDecoder {
         case "content_block_delta" where event.delta?.type == "text_delta":
             return [.text(event.delta?.text ?? "")]
         case "message_delta":
-            if let reason = event.delta?.stopReason { finish = Self.truncatedStops.contains(reason) ? .length : .stop }
+            switch event.delta?.stopReason {
+            case nil: break
+            case "refusal": throw ProviderError.refused
+            case let reason?: finish = Self.truncatedStops.contains(reason) ? .length : .stop
+            }
             return []
         case "message_stop":
-            return [.finished(finish)]
+            return [.finished(finish ?? .stop)]
         case "error":
             throw event.error?.providerError ?? ProviderError.invalidResponse
         default:
@@ -87,6 +91,6 @@ private struct AnthropicStreamDecoder: ChatStreamDecoder {
     }
 
     func end() -> [ChatDelta] {
-        [.finished(finish)]
+        finish.map { [.finished($0)] } ?? []
     }
 }

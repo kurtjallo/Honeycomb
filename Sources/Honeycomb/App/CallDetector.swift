@@ -28,17 +28,22 @@ final class CallDetector {
         monitor.start { change in
             Task { @MainActor [weak self] in self?.micChanged(change) }
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+        let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.machine.accessibilityTrusted = BrowserTitles.isTrusted
                 self.run(self.machine.handle(.tick(atMs: self.now)))
+                self.model?.tick()
             }
         }
+        // Common modes keep the auto-stop countdown and the quit deadline running while a menu,
+        // an alert, or a pending quit holds the run loop in another mode.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
         sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { _ in
-            Task { @MainActor [weak self] in await self?.model?.stopRecording() }
+            Task { @MainActor [weak self] in self?.model?.stopRecording() }
         }
     }
 
@@ -65,8 +70,11 @@ final class CallDetector {
         for command in commands {
             switch command {
             case .readTitle(let key, let bundleID):
-                let title = BrowserTitles.frontWindowTitle(bundleID: bundleID)
-                run(machine.handle(.titleRead(key: key, title: title)))
+                Task { [weak self] in
+                    let titles = await Task.detached { BrowserTitles.windowTitles(bundleID: bundleID) }.value
+                    guard let self else { return }
+                    self.run(self.machine.handle(.titleRead(key: key, titles: titles)))
+                }
             case .show(let prompt):
                 prompts.show(prompt) { [weak self] start in
                     guard let self else { return }
@@ -75,9 +83,11 @@ final class CallDetector {
             case .hide(let key):
                 prompts.hide(key)
             case .startRecording(let prompt):
-                Task { await model?.startFromPrompt(prompt) }
+                model?.startFromPrompt(prompt)
             case .callEnded:
                 model?.callEnded()
+            case .callResumed:
+                model?.callResumed()
             }
         }
     }
@@ -102,7 +112,7 @@ final class CallPromptPanels {
             self?.hide(prompt.key)
             choose(start)
         }
-        let host = NSHostingView(rootView: view.honeycombAppearance())
+        let host = NSHostingView(rootView: view)
         host.sizingOptions = [.preferredContentSize]
         panel.contentView = host
         if let screen = NSScreen.main {

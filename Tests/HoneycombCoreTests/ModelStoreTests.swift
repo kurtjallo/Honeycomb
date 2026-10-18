@@ -51,6 +51,21 @@ struct ModelStoreTests {
         #expect(await store.state(ModelCatalog.parakeet) == .failed("low_disk"))
     }
 
+    @Test("network drops, server errors, and rate limits are retried", arguments: [
+        URLError(.networkConnectionLost) as any Error, DownloadError.http(503), DownloadError.http(500), DownloadError.http(429),
+    ])
+    func retriesTransientFailures(_ error: any Error) {
+        #expect(ModelStore.retryWait(after: error, failures: 0) != nil)
+    }
+
+    @Test("a full disk, a missing file, or a bad checksum fails at once instead of waiting for the network", arguments: [
+        CocoaError(.fileWriteOutOfSpace) as any Error, POSIXError(.ENOSPC), DownloadError.http(404),
+        DownloadError.checksumMismatch("weight.bin"),
+    ])
+    func failsLastingErrors(_ error: any Error) {
+        #expect(ModelStore.retryWait(after: error, failures: 0) == nil)
+    }
+
     @Test func catalogIsPinned() {
         for spec in ModelCatalog.all {
             #expect(spec.revision.count == 40)

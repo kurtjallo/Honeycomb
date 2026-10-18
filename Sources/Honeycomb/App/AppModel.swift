@@ -10,7 +10,7 @@ final class AppModel {
     private(set) var database: AppDatabase?
     private(set) var meetings: [Meeting] = []
     var selection: UUID?
-    private(set) var recordingMeetingID: UUID?
+    private(set) var lifecycle = RecordingLifecycle()
     private(set) var status = RecordingStatus()
     var showConsent = false
     var alert: AppAlert?
@@ -22,8 +22,8 @@ final class AppModel {
     private(set) var modelStates: [String: ModelStore.State] = [:]
     private(set) var providers: [ProviderRecord] = []
     private(set) var routes: [AITask: Route] = [:]
-    /// The "Ask once" AI choice, shown at launch until a notes route is stored.
     var showAIChoice = false
+    private static let aiChoiceAskedKey = "honeycomb.aiChoiceAsked"
 
     let paths = Paths.standard
     private(set) var store: ModelStore?
@@ -33,17 +33,19 @@ final class AppModel {
     private var recorder: MeetingRecorder?
     private var modelTask: Task<Void, Never>?
     private var detector: CallDetector?
-    private var autoStop: Task<Void, Never>?
-    /// Two quick clicks would start two captures, and a failed one would clear the other's recording flag.
-    /// True while capture is starting. macOS shows its permission prompts during this wait.
-    private(set) var isStartingRecording = false
+    private var routeChanges = 0
     /// Seconds left before an automatic stop, while the user can still keep recording.
     private(set) var autoStopCountdown: Int?
+    private let launchedAt = ContinuousClock.now
+    private var starting: Task<Void, Never>?
     private var statusTask: Task<Void, Never>?
     private var listTask: Task<Void, Never>?
     let pill = RecordingPillController()
 
-    var isRecording: Bool { recordingMeetingID != nil }
+    var isRecording: Bool { lifecycle.phase.meetingID != nil }
+    var isStartingRecording: Bool { lifecycle.phase.isStarting }
+    var isStoppingRecording: Bool { lifecycle.phase.isStopping }
+    var recordingMeetingID: UUID? { lifecycle.phase.meetingID }
 
     func launch() {
         do {
@@ -65,7 +67,7 @@ final class AppModel {
             try database.seedBuiltIns()
             templates = (try? database.templates()) ?? BuiltInTemplates.all
             reloadAISetup()
-            showAIChoice = routes[.enhance] == nil
+            showAIChoice = routes[.enhance] == nil && !UserDefaults.standard.bool(forKey: Self.aiChoiceAskedKey)
             Task {
                 await pipeline.setHandlers(handlers)
                 await pipeline.start()
@@ -127,6 +129,10 @@ final class AppModel {
         routes[.enhance].flatMap { $0.providerId == ProviderRecord.builtIn.id ? $0.model : nil }
     }
 
+    func aiChoiceClosed() {
+        UserDefaults.standard.set(true, forKey: Self.aiChoiceAskedKey)
+    }
+
     func useBuiltInAI() {
         setRoutes([.enhance, .chat], provider: ProviderRecord.builtIn.id, model: ModelCatalog.builtInLLM)
     }
@@ -138,6 +144,7 @@ final class AppModel {
     private func setRoutes(_ tasks: [AITask], provider: String, model: String) {
         guard let database else { return }
         for task in tasks { try? database.saveRoute(Route(task: task, providerId: provider, model: model)) }
+        routeChanges += 1
         reloadAISetup()
         installRoutedModels()
         // Meetings waiting on consent were waiting for the old notes provider. A re-run asks again
@@ -195,17 +202,16 @@ final class AppModel {
         }
     }
 
-    /// The optional 9B. When it is ready, notes on the built-in model move to it. Chat stays on
-    /// the 4B, the only model allowed to load during a recording.
     func downloadLargeModel() {
         guard let store else { return }
+        let changesAtStart = routeChanges
         Task {
             do {
                 try await store.install(ModelCatalog.largeLLM)
             } catch {
                 return
             }
-            if routes[.enhance]?.providerId == ProviderRecord.builtIn.id {
+            if routeChanges == changesAtStart, routes[.enhance]?.providerId == ProviderRecord.builtIn.id {
                 setRoute(.enhance, provider: ProviderRecord.builtIn.id, model: ModelCatalog.largeLLM)
             }
         }
@@ -214,102 +220,153 @@ final class AppModel {
     nonisolated static func makeRecorders() -> [any TrackRecorder] {
         let apps = Set(CallAppCatalog.builtIn.map(\.bundleId))
         let picked = InputDevicePicker.pick(devices: InputDevices.all(), defaultInput: InputDevices.defaultInput,
-                                            callAppInputs: InputDevices.inputsInUse(preferring: apps))
+                                            callAppInputs: InputDevices.inputsInUse(of: apps))
         let tapIncludesOutput = UserDefaults.standard.bool(forKey: "systemAudioIncludesOutput")
         return [MicRecorder(deviceID: picked?.id), SystemAudioRecorder(includeOutputDevice: tapIncludesOutput)]
     }
 
-    func toggleRecording() async {
-        if isRecording { await stopRecording() } else { await startRecording() }
+    func toggleRecording() {
+        send(isRecording ? .stop : .start(startTarget))
     }
 
-    func startFromPrompt(_ prompt: CallPrompt) async {
-        if isRecording {
-            guard prompt.replacesRecording else { return }
-            await stopRecording()
-        }
-        await startRecording(callApp: prompt.app, fromCall: prompt.key)
+    func startFromPrompt(_ prompt: CallPrompt) {
+        send(.start(.call(prompt)))
+    }
+
+    func stopRecording() {
+        send(.stop)
+    }
+
+    func pauseOrResume() {
+        send(lifecycle.phase.isPaused ? .resume : .pause)
+    }
+
+    func keepRecording() {
+        send(.resume)
     }
 
     /// The call app let go of the mic. Pause now, then stop after a short window to undo.
     func callEnded() {
-        guard isRecording, autoStop == nil else { return }
-        Task { await recorder?.pause() }
-        autoStopCountdown = 8
-        pill.show()
-        autoStop = Task { [weak self] in
-            for remaining in stride(from: 7, through: 0, by: -1) {
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled else { return }
-                self?.autoStopCountdown = remaining
+        send(.callEnded(atMs: nowMs))
+    }
+
+    func callResumed() {
+        send(.callResumed)
+    }
+
+    func tick() {
+        send(.tick(atMs: nowMs))
+    }
+
+    func quitRequested() {
+        send(.quitRequested(atMs: nowMs))
+    }
+
+    private var startTarget: StartTarget {
+        guard let selection, (try? database?.meeting(selection))??.state == .draft else { return .newMeeting }
+        return .draft(selection)
+    }
+
+    private var nowMs: Int64 {
+        Int64((ContinuousClock.now - launchedAt) / .milliseconds(1))
+    }
+
+    private func send(_ event: RecordingEvent) {
+        let commands = lifecycle.handle(event)
+        if let host, host.gate.isRecording != lifecycle.phase.holdsModels {
+            host.gate.set(lifecycle.phase.holdsModels)
+            if !lifecycle.phase.holdsModels { Task { await pipeline?.nudge() } }
+        }
+        autoStopCountdown = lifecycle.secondsUntilAutoStop(atMs: nowMs)
+        for command in commands { run(command) }
+    }
+
+    private func run(_ command: RecordingCommand) {
+        switch command {
+        case .startCapture(let target):
+            status = RecordingStatus()
+            pill.show()
+            starting = Task { await openCapture(target) }
+        case .cancelStart:
+            starting?.cancel()
+        case .began(let active):
+            partials = [:]
+            selection = active.meetingID
+            showConsent = true
+            pill.show()
+            detector?.recordingStarted(fromCall: active.callKey)
+        case .pauseCapture:
+            Task { await recorder?.pause() }
+        case .resumeCapture:
+            Task {
+                do {
+                    try await recorder?.resume()
+                } catch {
+                    send(.resumeFailed)
+                }
             }
-            guard !Task.isCancelled else { return }
-            self?.autoStop = nil
-            self?.autoStopCountdown = nil
-            await self?.stopRecording()
+        case .stopCapture:
+            Task { await closeCapture() }
+        case .askToQuit:
+            Task { send(confirmQuit() ? .quitConfirmed(atMs: nowMs) : .quitCancelled) }
+        case .quit:
+            Task {
+                await EditorHost.shared.flush()
+                await pipeline?.stop()
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+        case .quitNow:
+            NSApp.reply(toApplicationShouldTerminate: true)
+        case .cancelQuit:
+            NSApp.reply(toApplicationShouldTerminate: false)
+        case .alert(let error):
+            alert = AppAlert(error)
+            showMainWindow()
         }
     }
 
-    func keepRecording() {
-        autoStop?.cancel()
-        autoStop = nil
-        autoStopCountdown = nil
-        Task { try? await recorder?.resume() }
-    }
-
-    func startRecording(into existing: UUID? = nil, callApp: CallApp? = nil, fromCall key: String? = nil) async {
-        guard let recorder, !isRecording, !isStartingRecording else { return }
-        isStartingRecording = true
-        defer { isStartingRecording = false }
-        pill.show()
-        // The pipeline must see the flag before it is preempted, or it claims the same model job
-        // again while the capture is still starting.
-        await host?.setRecording(true)
+    private func openCapture(_ target: StartTarget) async {
+        guard let recorder else { return send(.captureFailed(.captureFailed)) }
         await pipeline?.recordingStarted()
+        let existing: UUID?
+        let callApp: CallApp?
+        switch target {
+        case .newMeeting: (existing, callApp) = (nil, nil)
+        case .draft(let id): (existing, callApp) = (id, nil)
+        case .call(let prompt): (existing, callApp) = (nil, prompt.app)
+        }
         do {
             let (id, session) = try await recorder.start(existing: existing, callApp: callApp) { update in
                 Task { @MainActor [weak self] in self?.apply(update) }
             }
-            recordingMeetingID = id
-            partials = [:]
-            selection = id
-            status = RecordingStatus()
-            showConsent = true
-            pill.show()
-            detector?.recordingStarted(fromCall: key)
             statusTask = Task { [weak self] in
                 for await status in session.status { self?.status = status }
             }
+            send(.captureOpened(meetingID: id))
         } catch {
             pill.hide()
-            await host?.setRecording(false)
-            alert = (error as? RecordingError).map(AppAlert.init)
-                ?? AppAlert(title: "Couldn't start recording", message: "Something went wrong starting the recording.")
+            send(.captureFailed(error is CancellationError ? nil : (error as? RecordingError) ?? .captureFailed))
         }
     }
 
-    func pauseOrResume() async {
-        guard let recorder else { return }
-        if status.isPaused {
-            do { try await recorder.resume() } catch { alert = AppAlert(.captureFailed) }
-        } else {
-            await recorder.pause()
-        }
-    }
-
-    func stopRecording() async {
-        guard let recorder, isRecording else { return }
-        autoStop?.cancel()
-        autoStop = nil
-        autoStopCountdown = nil
+    private func closeCapture() async {
         detector?.recordingStopped()
         statusTask?.cancel()
         showConsent = false
         pill.hide()
-        let id = await recorder.stop()
-        recordingMeetingID = nil
+        let id = await recorder?.stop()
         partials = [:]
         if let id { await pipeline?.meetingStopped(id) }
+        send(.stopFinished)
+    }
+
+    private func confirmQuit() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Stop and save the recording?"
+        alert.informativeText = "Honeycomb is recording a meeting. Quitting stops the recording and keeps what was captured."
+        alert.addButton(withTitle: "Stop and Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func apply(_ update: LiveUpdate) {
@@ -324,9 +381,7 @@ final class AppModel {
     }
 
     func regenerate(_ meeting: Meeting, template: String) {
-        guard let database, var updated = try? database.meeting(meeting.id) else { return }
-        updated.templateId = template
-        try? database.save(updated)
+        try? database?.setTemplate(meeting.id, template)
         Task { await pipeline?.enqueue(.enhance, meeting: meeting.id) }
     }
 
@@ -334,15 +389,17 @@ final class AppModel {
         try? database?.setCurrentEnhanced(meeting.id, version.id)
     }
 
-    /// Copies the current notes as rich text and Markdown, so headings and lists survive a paste.
-    func copyNotes(_ meeting: Meeting) {
-        guard let database, let id = meeting.currentEnhancedId,
-              let note = try? database.enhancedNotes(meeting.id).first(where: { $0.id == id }) else { return }
-        let doc = note.doc.flatMap(PMNode.decode) ?? Markdown.document(note.markdown)
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(NoteExport.html(doc), forType: .html)
-        pasteboard.setString(Markdown.markdown(doc), forType: .string)
+    /// Saves the editor's last edits first, so the copy includes what the user just typed.
+    func copyNotes(_ note: EnhancedNote) {
+        Task {
+            await EditorHost.shared.flush()
+            let note = (try? database?.enhancedNotes(note.meetingId).first { $0.id == note.id }) ?? note
+            let doc = note.doc.flatMap(PMNode.decode) ?? Markdown.document(note.markdown)
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(NoteExport.html(doc), forType: .html)
+            pasteboard.setString(Markdown.markdown(doc), forType: .string)
+        }
     }
 
     func showSource(_ block: String, enhanced: UUID) {
@@ -379,8 +436,15 @@ final class AppModel {
         return nil
     }
 
+    var meetingToDelete: Meeting?
+
+    func canDelete(_ meeting: Meeting) -> Bool {
+        let state = meetings.first { $0.id == meeting.id }?.state ?? meeting.state
+        return meeting.id != recordingMeetingID && ![.recording, .paused, .transcribing, .writingNotes].contains(state)
+    }
+
     func delete(_ meeting: Meeting) {
-        guard meeting.id != recordingMeetingID else { return }
+        guard canDelete(meeting) else { return }
         try? database?.deleteMeeting(meeting.id)
         try? FileManager.default.removeItem(at: paths.audioFolder(for: meeting.id))
         if selection == meeting.id { selection = nil }
@@ -388,10 +452,8 @@ final class AppModel {
 
     func rename(_ meeting: Meeting, to title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard var updated = try? database?.meeting(meeting.id), !trimmed.isEmpty, trimmed != updated.title else { return }
-        updated.title = trimmed
-        updated.titleSource = .user
-        try? database?.save(updated)
+        guard let current = try? database?.meeting(meeting.id), !trimmed.isEmpty, trimmed != current.title else { return }
+        try? database?.renameMeeting(meeting.id, to: trimmed)
     }
 
     func newNote() {
@@ -401,10 +463,14 @@ final class AppModel {
         selection = meeting.id
     }
 
+    @ObservationIgnored var openWindow: OpenWindowAction?
+
     func showMainWindow() {
         NSApp.activate()
         if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
             window.makeKeyAndOrderFront(nil)
+        } else {
+            openWindow?(id: "main")
         }
     }
 

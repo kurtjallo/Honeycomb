@@ -11,28 +11,57 @@ public enum Markdown {
         var blocks: [PMNode] = []
         var paragraph: [String] = []
         var listLines: [ListLine] = []
+        var code: [String]?
+        var blankInList = false
 
         func flushParagraph() {
             guard !paragraph.isEmpty else { return }
-            blocks.append(block("paragraph", inline(paragraph.joined(separator: " ")), newBlockID()))
+            blocks.append(block("paragraph", inline(paragraph.reduce("", joinLine).trimmingCharacters(in: .newlines)), newBlockID()))
             paragraph = []
         }
         func flushList() {
             guard !listLines.isEmpty else { return }
             var index = 0
-            blocks += lists(listLines, level: listLines[0].level, index: &index, newBlockID: newBlockID)
+            blocks += lists(listLines, level: listLines.map(\.level).min() ?? 0, index: &index, newBlockID: newBlockID)
             listLines = []
         }
+        func flushCode() {
+            guard let lines = code else { return }
+            code = nil
+            // An empty line keeps a code space. Two hard breaks in a row would export as a blank
+            // line, which splits the block in two when the Markdown is read back.
+            let content = lines.enumerated().flatMap { offset, line in
+                (offset == 0 ? [] : [PMNode(type: "hardBreak")]) + [PMNode.text(line.isEmpty ? " " : line, marks: [.code])]
+            }
+            if !content.isEmpty { blocks.append(block("paragraph", content, newBlockID())) }
+        }
 
-        for rawLine in markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+        let rawLines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        for (index, rawLine) in rawLines.enumerated() {
             let line = rawLine.replacingOccurrences(of: "\t", with: "    ")
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("```") || isRule(trimmed) {
+            let lineEnd = line.hasSuffix("  ") ? "\n" : ""
+            if code != nil {
+                if closesFence(trimmed) { flushCode() } else { code?.append(line) }
+                continue
+            }
+            if opensFence(trimmed), rawLines[(index + 1)...].contains(where: closesFence) {
                 flushParagraph()
-                if trimmed.isEmpty && !listLines.isEmpty { continue }
+                flushList()
+                code = []
+                continue
+            }
+            if trimmed.isEmpty || isRule(trimmed) {
+                flushParagraph()
+                if trimmed.isEmpty && !listLines.isEmpty {
+                    blankInList = true
+                    continue
+                }
                 flushList()
                 continue
             }
+            let afterBlank = blankInList
+            blankInList = false
             if let heading = headingLine(trimmed) {
                 flushParagraph()
                 flushList()
@@ -40,21 +69,41 @@ public enum Markdown {
                                      content: nonEmpty(inline(heading.text))))
                 continue
             }
-            if let item = listLine(line) {
+            if var item = listLine(line) {
                 flushParagraph()
+                item.text += lineEnd
                 listLines.append(item)
                 continue
             }
             if !listLines.isEmpty, line.hasPrefix("  ") {
-                listLines[listLines.count - 1].text += " " + trimmed
+                listLines[listLines.count - 1].addLine(trimmed + lineEnd, startsParagraph: afterBlank)
                 continue
             }
             flushList()
-            paragraph.append(trimmed.hasPrefix(">") ? String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces) : trimmed)
+            let isRow = trimmed.hasPrefix("|")
+            if let last = paragraph.last, last.hasPrefix("|") != isRow { flushParagraph() }
+            paragraph.append((trimmed.hasPrefix(">") ? String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces) : trimmed)
+                             + (isRow ? "\n" : lineEnd))
         }
         flushParagraph()
         flushList()
+        flushCode()
         return .doc(blocks.isEmpty ? [PMNode(type: "paragraph", attrs: ["blockId": .string(newBlockID())])] : blocks)
+    }
+
+    /// A fence opens only if a later line closes it, so a stray or cut-off fence stays text instead
+    /// of turning the rest of the note into code. Backticks after the opening ones make it inline
+    /// code, as in CommonMark.
+    static func opensFence(_ line: String) -> Bool {
+        line.hasPrefix("```") && !line.dropFirst(3).contains("`")
+    }
+
+    static func closesFence(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces).hasPrefix("```")
+    }
+
+    static func joinLine(_ text: String, _ line: String) -> String {
+        text.isEmpty || text.hasSuffix("\n") ? text + line : text + " " + line
     }
 
     public static func newBlockID() -> String {
@@ -68,6 +117,17 @@ public enum Markdown {
         var checked: Bool
         var start: Int
         var text: String
+        var laterParagraphs: [String] = []
+
+        mutating func addLine(_ line: String, startsParagraph: Bool) {
+            if startsParagraph {
+                laterParagraphs.append(line)
+            } else if laterParagraphs.isEmpty {
+                text = Markdown.joinLine(text, line)
+            } else {
+                laterParagraphs[laterParagraphs.count - 1] = Markdown.joinLine(laterParagraphs[laterParagraphs.count - 1], line)
+            }
+        }
     }
 
     static func listLine(_ line: String) -> ListLine? {
@@ -112,10 +172,12 @@ public enum Markdown {
                     continue
                 }
                 let line = lines[index]
-                let paragraph = PMNode(type: "paragraph", content: nonEmpty(inline(line.text)))
+                let paragraphs = ([line.text] + line.laterParagraphs).map { text in
+                    PMNode(type: "paragraph", content: nonEmpty(inline(text.trimmingCharacters(in: .newlines))))
+                }
                 var attrs: [String: JSONValue] = ["blockId": .string(newBlockID())]
                 if kind == .task { attrs["checked"] = .bool(line.checked) }
-                items.append(PMNode(type: kind == .task ? "taskItem" : "listItem", attrs: attrs, content: [paragraph]))
+                items.append(PMNode(type: kind == .task ? "taskItem" : "listItem", attrs: attrs, content: paragraphs))
                 index += 1
             }
             switch kind {
@@ -163,10 +225,26 @@ public enum Markdown {
             }
             return nil
         }
+        func closingParen(from start: Int) -> Int? {
+            var depth = 0
+            for position in start..<chars.count {
+                if chars[position] == "(" { depth += 1 }
+                if chars[position] == ")" {
+                    if depth == 0 { return position }
+                    depth -= 1
+                }
+            }
+            return nil
+        }
+        func adding(_ mark: PMMark) -> [PMMark] { marks.contains(mark) ? marks : marks + [mark] }
 
         while index < chars.count {
             let character = chars[index]
-            if character == "`", let close = find(["`"], from: index + 1), close > index + 1 {
+            if character == "\n" {
+                flush()
+                nodes.append(PMNode(type: "hardBreak"))
+                index += 1
+            } else if character == "`", let close = find(["`"], from: index + 1), close > index + 1 {
                 flush()
                 nodes.append(.text(String(chars[index + 1..<close]), marks: marks + [.code]))
                 index = close + 1
@@ -174,17 +252,17 @@ public enum Markdown {
                       index + 1 < chars.count, chars[index + 1] == character,
                       let close = find([character, character], from: index + 2), close > index + 2 {
                 flush()
-                nodes += inline(String(chars[index + 2..<close]), marks: marks + [.bold])
+                nodes += inline(String(chars[index + 2..<close]), marks: adding(.bold))
                 index = close + 2
             } else if character == "*" || (character == "_" && (index == 0 || !chars[index - 1].isLetter)),
                       index + 1 < chars.count, chars[index + 1] != " ",
                       let close = find([character], from: index + 1), close > index + 1,
                       character == "*" || close + 1 >= chars.count || !chars[close + 1].isLetter {
                 flush()
-                nodes += inline(String(chars[index + 1..<close]), marks: marks + [.italic])
+                nodes += inline(String(chars[index + 1..<close]), marks: adding(.italic))
                 index = close + 1
-            } else if character == "[", let middle = find(["]", "("], from: index + 1),
-                      let close = find([")"], from: middle + 2) {
+            } else if character == "[", let middle = find(["]"], from: index + 1),
+                      middle + 1 < chars.count, chars[middle + 1] == "(", let close = closingParen(from: middle + 2) {
                 flush()
                 let label = String(chars[index + 1..<middle])
                 let href = String(chars[middle + 2..<close]).trimmingCharacters(in: .whitespaces)
@@ -206,7 +284,7 @@ public enum Markdown {
 
     static func merge(_ nodes: [PMNode]) -> [PMNode] {
         var merged: [PMNode] = []
-        for node in nodes where !(node.text ?? "").isEmpty {
+        for node in nodes where node.type != "text" || !(node.text ?? "").isEmpty {
             if var last = merged.last, last.type == "text", node.type == "text", last.marks == node.marks {
                 last.text = (last.text ?? "") + (node.text ?? "")
                 merged[merged.count - 1] = last
@@ -230,7 +308,7 @@ public enum Markdown {
             if case .int(let value) = node.attrs?["level"] { level = value }
             return String(repeating: "#", count: level) + " " + inlineMarkdown(node.content ?? [])
         case "paragraph":
-            return inlineMarkdown(node.content ?? [])
+            return indent + inlineMarkdown(node.content ?? []).replacingOccurrences(of: "\n", with: "\n" + indent)
         case "bulletList", "orderedList", "taskList":
             var number = 1
             if case .int(let start) = node.attrs?["start"] { number = start }
@@ -248,8 +326,10 @@ public enum Markdown {
                 var lines: [String] = []
                 for (offset, child) in (item.content ?? []).enumerated() {
                     if offset == 0, child.type == "paragraph" {
-                        lines.append(indent + marker + inlineMarkdown(child.content ?? []))
+                        let text = inlineMarkdown(child.content ?? []).replacingOccurrences(of: "\n", with: "\n" + indent + "  ")
+                        lines.append(indent + marker + text)
                     } else {
+                        if child.type == "paragraph" { lines.append("") }
                         lines.append(render(child, indent: indent + "  "))
                     }
                 }
@@ -265,7 +345,7 @@ public enum Markdown {
             if node.type == "hardBreak" { return "  \n" }
             var text = node.text ?? ""
             let marks = node.marks ?? []
-            if marks.contains(.code) { return "`\(text)`" }
+            if marks.contains(.code) { text = "`\(text)`" }
             if marks.contains(.italic) { text = "*\(text)*" }
             if marks.contains(.bold) { text = "**\(text)**" }
             if let link = marks.first(where: { $0.type == "link" }), case .string(let href) = link.attrs?["href"] {

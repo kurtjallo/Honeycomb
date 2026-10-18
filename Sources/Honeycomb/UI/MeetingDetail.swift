@@ -6,8 +6,9 @@ struct MeetingDetail: View {
     @Environment(AppModel.self) private var model
     let meeting: Meeting
     @State private var title = ""
-    @State private var tab = NotesTab.ai
+    @State private var tab = NotesTab.mine
     @State private var versions: [EnhancedNote] = []
+    @State private var pinned: UUID?
 
     enum NotesTab: Hashable {
         case ai
@@ -16,9 +17,13 @@ struct MeetingDetail: View {
 
     /// A generating version left by a crash would lock the editor read-only, so it counts only
     /// while the meeting is really writing notes.
+    private var generating: EnhancedNote? {
+        versions.first { $0.status == .generating && meeting.state == .writingNotes }
+    }
+
     private var current: EnhancedNote? {
-        versions.first { $0.id == meeting.currentEnhancedId }
-            ?? versions.first { $0.status == .generating && meeting.state == .writingNotes }
+        guard let generating else { return versions.first { $0.id == meeting.currentEnhancedId } }
+        return versions.first { $0.id == pinned } ?? generating
     }
 
     private var hasAINotes: Bool { current != nil }
@@ -82,7 +87,12 @@ struct MeetingDetail: View {
                             // macOS puts a white label on the selected segment; on `accentStrong` that is under 4.5:1.
                             .tint(.accentText)
                             Spacer()
-                            if tab == .ai { NotesMenu(meeting: meeting, versions: versions) }
+                            if tab == .ai {
+                                NotesMenu(meeting: meeting, versions: versions, shown: current, generating: generating?.id) { version in
+                                    pinned = version.id
+                                    if version.status == .done { model.useVersion(version, of: meeting) }
+                                }
+                            }
                         }
                     }
                 }
@@ -112,16 +122,15 @@ struct MeetingDetail: View {
             .frame(width: 460)
         }
         .onAppear { title = meeting.title }
-        .onChange(of: meeting.title) { title = meeting.title }
+        .onChange(of: meeting.title) { old, new in if title == old { title = new } }
         .onDisappear { model.rename(meeting, to: title) }
+        .onChange(of: generating?.id) { pinned = nil }
+        // Switching while the user types in My notes would send their next keystrokes into the AI notes.
+        .onChange(of: hasAINotes) { tab = hasAINotes && !EditorHost.shared.isFocused ? .ai : .mine }
         .task(id: meeting.id) {
             guard let database = model.database else { return }
             do {
-                for try await versions in database.enhancedUpdates(meeting.id) {
-                    let hadNotes = !self.versions.isEmpty
-                    self.versions = versions
-                    if !hadNotes, !versions.isEmpty { tab = .ai }
-                }
+                for try await versions in database.enhancedUpdates(meeting.id) { self.versions = versions }
             } catch {}
         }
     }
@@ -134,8 +143,12 @@ struct NotesEditor: View {
     let tab: MeetingDetail.NotesTab
     let current: EnhancedNote?
 
+    /// My notes never depend on the AI version, so nothing about it reloads them under the user.
     private var key: String {
-        "\(meeting.id)-\(tab)-\(current?.id.uuidString ?? "none")-\(current?.status.rawValue ?? "")"
+        switch tab {
+        case .mine: "\(meeting.id)-mine"
+        case .ai: "\(meeting.id)-ai-\(current?.id.uuidString ?? "none")-\(current?.status.rawValue ?? "")"
+        }
     }
 
     var body: some View {
@@ -144,8 +157,13 @@ struct NotesEditor: View {
             .onChange(of: key) { load() }
             .onChange(of: current?.markdown) {
                 guard tab == .ai, let current, current.status == .generating else { return }
-                EditorHost.shared.streamUpdate(Markdown.document(current.markdown))
+                EditorHost.shared.streamUpdate(document(current))
             }
+    }
+
+    private func document(_ note: EnhancedNote) -> PMNode {
+        note.doc.flatMap(PMNode.decode)
+            ?? Authorship.apply(to: Markdown.document(note.markdown), userNotes: (try? model.database?.userNote(meeting.id))??.markdown ?? "")
     }
 
     private func load() {
@@ -164,11 +182,10 @@ struct NotesEditor: View {
         case .ai:
             guard var note = current else { return }
             if note.status == .generating {
-                host.load(Markdown.document(note.markdown), editable: false, placeholder: "Writing notes…", onChange: nil)
+                host.load(document(note), editable: false, placeholder: "Writing notes…", onChange: nil)
                 return
             }
-            let doc = note.doc.flatMap(PMNode.decode) ?? Markdown.document(note.markdown)
-            host.load(doc, editable: true, placeholder: "", onChange: { doc in
+            host.load(document(note), editable: true, placeholder: "", onChange: { doc in
                 note.doc = doc.encoded()
                 note.markdown = Markdown.markdown(doc)
                 try? database.saveEnhanced(note)
@@ -185,6 +202,9 @@ struct NotesMenu: View {
     @Environment(AppModel.self) private var model
     let meeting: Meeting
     let versions: [EnhancedNote]
+    let shown: EnhancedNote?
+    let generating: UUID?
+    let pick: (EnhancedNote) -> Void
 
     var body: some View {
         Menu {
@@ -199,15 +219,15 @@ struct NotesMenu: View {
                 Section("Versions") {
                     ForEach(versions) { version in
                         Button(version.createdAt.formatted(date: .abbreviated, time: .shortened)
-                               + (version.id == meeting.currentEnhancedId ? " ✓" : "")) {
-                            model.useVersion(version, of: meeting)
+                               + (version.id == shown?.id ? " ✓" : "")) {
+                            pick(version)
                         }
-                        .disabled(version.status != .done)
+                        .disabled(version.status != .done && version.id != generating)
                     }
                 }
             }
             Divider()
-            Button("Copy notes") { model.copyNotes(meeting) }
+            Button("Copy notes") { if let shown { model.copyNotes(shown) } }
         } label: {
             Label("Notes options", systemImage: "ellipsis.circle")
         }

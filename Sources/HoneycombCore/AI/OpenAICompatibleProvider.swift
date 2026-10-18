@@ -20,9 +20,11 @@ public struct OpenAICompatibleProvider: ChatProvider, EmbeddingProvider {
         transport = ProviderTransport(session: session, policy: policy ?? (isLocal ? .local : .cloud), gate: gate)
     }
 
-    /// People paste base URLs with or without `/v1`. A path that already names a version, such as
-    /// `/api/v1` or Gemini's `/v1beta/openai`, is used as given.
     static func apiRoot(_ url: URL) -> URL {
+        var url = url
+        for endpoint in [["chat", "completions"], ["messages"]] where url.pathComponents.suffix(endpoint.count).elementsEqual(endpoint) {
+            for _ in endpoint { url.deleteLastPathComponent() }
+        }
         let hasVersion = url.pathComponents.contains { $0.first == "v" && $0.dropFirst().first?.isNumber == true }
         return hasVersion ? url : url.appending(path: "v1")
     }
@@ -54,28 +56,43 @@ public struct OpenAICompatibleProvider: ChatProvider, EmbeddingProvider {
 }
 
 /// OpenAI itself replaced `max_tokens` with `max_completion_tokens`, and its reasoning models (the
-/// o-series and gpt-5 family) refuse both `max_tokens` and any temperature but the default. Other
-/// servers, such as Ollama and LM Studio, only read `max_tokens`, so they keep the old fields.
+/// o-series and gpt-5 family) refuse both `max_tokens` and any temperature but the default. Those
+/// models are found by name, because gateways such as LiteLLM, Helicone, and OpenRouter pass the
+/// fields through to OpenAI. Other servers, such as Ollama and LM Studio, only read `max_tokens`.
 private struct ChatBody: Encodable, Sendable {
     var model: String
     var messages: [ChatMessage]
     var maxTokens: Int?
     var maxCompletionTokens: Int?
+    var reasoningEffort: String?
     var temperature: Double?
     var stream = true
+
+    /// Hidden reasoning counts against `max_completion_tokens`, and a limit reached while reasoning
+    /// leaves an empty answer. OpenAI's reasoning guide says to reserve at least 25,000 tokens for
+    /// reasoning when starting out, so that much goes on top of the answer's own budget.
+    static let reasoningTokens = 25_000
 
     init(_ request: ChatRequest, isOpenAI: Bool) {
         model = request.model
         messages = request.messages
-        guard isOpenAI else {
+        let name = request.model.split(separator: "/").last.map { $0.lowercased() } ?? ""
+        if Self.isReasoningFamily(name) {
+            // Chat variants such as gpt-5-chat-latest don't reason and may refuse reasoning_effort.
+            let reasons = !name.contains("-chat")
+            maxCompletionTokens = request.maxTokens + (reasons ? Self.reasoningTokens : 0)
+            reasoningEffort = reasons ? "low" : nil
+        } else if isOpenAI {
+            maxCompletionTokens = request.maxTokens
+            temperature = request.temperature
+        } else {
             maxTokens = request.maxTokens
             temperature = request.temperature
-            return
         }
-        maxCompletionTokens = request.maxTokens
-        let reasoningModel = request.model.hasPrefix("gpt-5")
-            || (request.model.first == "o" && request.model.dropFirst().first?.isNumber == true)
-        temperature = reasoningModel ? nil : request.temperature
+    }
+
+    static func isReasoningFamily(_ name: String) -> Bool {
+        name.hasPrefix("gpt-5") || (name.first == "o" && name.dropFirst().first?.isNumber == true)
     }
 }
 
@@ -120,18 +137,27 @@ private struct OpenAIStreamDecoder: ChatStreamDecoder {
     }
 
     private var think = ThinkFilter()
-    private var finish = FinishReason.stop
+    private var finish: FinishReason?
 
     mutating func decode(_ event: SSEEvent) throws -> [ChatDelta] {
-        if event.data == "[DONE]" { return end() }
+        if event.data == "[DONE]" {
+            finish = finish ?? .stop
+            return end()
+        }
         let chunk = try ProviderTransport.decode(StreamChunk.self, from: Data(event.data.utf8))
         if let error = chunk.error { throw error.providerError }
         guard let choice = chunk.choices?.first else { return [] }
-        if choice.finishReason == "length" { finish = .length }
-        return [.text(think.feed(choice.delta?.content ?? ""))]
+        let text = think.feed(choice.delta?.content ?? "")
+        switch choice.finishReason {
+        case nil: break
+        case "length": finish = .length
+        case "content_filter": throw ProviderError.refused
+        default: finish = .stop
+        }
+        return [.text(text)]
     }
 
     mutating func end() -> [ChatDelta] {
-        [.text(think.finish()), .finished(finish)]
+        [.text(think.finish())] + (finish.map { [.finished($0)] } ?? [])
     }
 }

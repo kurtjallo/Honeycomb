@@ -4,18 +4,19 @@ import type { Attrs, Node as PMNode, Schema } from '@tiptap/pm/model'
 type Mode = 'edit' | 'readonly'
 
 type Inbound = {
-  load: { doc: PMNode; mode: Mode; placeholder: string }
+  load: { loadId: number; doc: PMNode; mode: Mode; placeholder: string }
   streamUpdate: { doc: PMNode }
   streamDone: { doc: PMNode }
   setTheme: { appearance: 'light' | 'dark'; fontSize: number; underlineAI: boolean }
   setSources: { blockIds: string[] }
   getDoc: Record<string, never>
+  flush: Record<string, never>
   focus: Record<string, never>
 }
 
 type Outbound = {
   ready: { schemaVersion: 1; bundleVersion: string }
-  docChanged: { doc: JSONContent }
+  docChanged: { loadId: number; doc: JSONContent }
   sourceClicked: { blockId: string; rect: { x: number; y: number; width: number; height: number } }
   linkClicked: { href: string }
 }
@@ -34,11 +35,12 @@ declare global {
 type Parser<T> = (raw: Record<string, unknown>, schema: Schema) => T | undefined
 
 const parsers: { [T in keyof Inbound]: Parser<Inbound[T]> } = {
-  load: ({ doc, mode, placeholder }, schema) => {
+  load: ({ loadId, doc, mode, placeholder }, schema) => {
+    if (!Number.isInteger(loadId)) return undefined
     if (mode !== 'edit' && mode !== 'readonly') return undefined
     if (placeholder !== undefined && typeof placeholder !== 'string') return undefined
     const parsed = doc === null ? (schema.topNodeType.createAndFill() ?? undefined) : parseDoc(doc, schema)
-    return parsed && { doc: parsed, mode, placeholder: placeholder ?? '' }
+    return parsed && { loadId: loadId as number, doc: parsed, mode, placeholder: placeholder ?? '' }
   },
   streamUpdate: ({ doc }, schema) => {
     const parsed = parseDoc(doc, schema)
@@ -59,6 +61,7 @@ const parsers: { [T in keyof Inbound]: Parser<Inbound[T]> } = {
       ? { blockIds }
       : undefined,
   getDoc: () => ({}),
+  flush: () => ({}),
   focus: () => ({}),
 }
 

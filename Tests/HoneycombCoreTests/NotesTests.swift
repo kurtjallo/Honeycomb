@@ -59,6 +59,81 @@ struct MarkdownTests {
         #expect(Markdown.inline("use snake_case_names here").count == 1)
     }
 
+    @Test func aListWhoseFirstItemIsIndentedKeepsEveryItem() {
+        #expect(Markdown.document("  - a\n- b\n- c").plainText == "abc")
+        #expect(Markdown.document("  1. x\n\n- y").plainText == "x\ny")
+    }
+
+    @Test func nestedEmphasisGivesEachMarkOnce() {
+        #expect(Markdown.inline("**a __b__ c**") == [.text("a b c", marks: [.bold])])
+        #expect(Markdown.inline("*a _b_ c*") == [.text("a b c", marks: [.italic])])
+    }
+
+    @Test func linksStartAtTheirOwnBracketAndKeepParensInTheURL() {
+        #expect(Markdown.inline("[12:30] Them: see [deck](https://acme.com/deck)") == [
+            .text("[12:30] Them: see "), .text("deck", marks: [.link("https://acme.com/deck")]),
+        ])
+        #expect(Markdown.inline("[wiki](https://en.wikipedia.org/wiki/Foo_(bar)).") == [
+            .text("wiki", marks: [.link("https://en.wikipedia.org/wiki/Foo_(bar)")]), .text("."),
+        ])
+    }
+
+    @Test func codeKeepsItsBoldAndLink() {
+        let markdown = "**`x`** and [`y`](https://acme.com)"
+        #expect(Markdown.markdown(Markdown.document(markdown)) == markdown)
+    }
+
+    @Test func aHardBreakInAListItemRoundTrips() {
+        let paragraph = PMNode(type: "paragraph", content: [.text("a"), PMNode(type: "hardBreak"), .text("b")])
+        let doc = PMNode.doc([PMNode(type: "bulletList", content: [
+            PMNode(type: "listItem", attrs: ["blockId": .string("b1")], content: [paragraph]),
+        ])])
+        #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
+    }
+
+    @Test func aListItemWithTwoParagraphsRoundTrips() {
+        let doc = PMNode.doc([PMNode(type: "bulletList", content: [
+            PMNode(type: "listItem", attrs: ["blockId": .string("b1")], content: [
+                PMNode(type: "paragraph", content: [.text("a")]), PMNode(type: "paragraph", content: [.text("b")]),
+            ]),
+            PMNode(type: "listItem", attrs: ["blockId": .string("b2")], content: [PMNode(type: "paragraph", content: [.text("c")])]),
+        ])])
+        #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
+    }
+
+    @Test func htmlExportKeepsTheListStart() {
+        #expect(NoteExport.html(Markdown.document("3. a\n4. b")) == "<ol start=\"3\"><li>a</li><li>b</li></ol>")
+    }
+
+    @Test func aCodeFenceKeepsEachLineAsCode() {
+        let doc = Markdown.document("Run this:\n\n```sh\n# not a heading\n- not a list\n```", newBlockID: ids())
+        #expect(doc.content?.last == PMNode(type: "paragraph", attrs: ["blockId": .string("b2")], content: [
+            .text("# not a heading", marks: [.code]), PMNode(type: "hardBreak"), .text("- not a list", marks: [.code]),
+        ]))
+        #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
+    }
+
+    @Test func aBlankLineInACodeFenceRoundTrips() {
+        let doc = Markdown.document("```\nlet a = 1\n\nlet b = 2\n```", newBlockID: ids())
+        #expect(doc.content?.count == 1)
+        #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
+    }
+
+    @Test func aFenceThatNeverClosesIsText() {
+        let stray = Markdown.document("## Summary\n\n- a\n\n```\n## Next steps\n\n- [ ] b", newBlockID: ids())
+        #expect(stray.content?.map(\.type) == ["heading", "bulletList", "paragraph", "heading", "taskList"])
+        #expect(stray.content?[2].plainText == "```")
+
+        let inlineCode = Markdown.document("```make test``` runs the suite.\n\n```sh\nmake\n```", newBlockID: ids())
+        #expect(inlineCode.content?.count == 2)
+        #expect(inlineCode.content?.last?.content == [.text("make", marks: [.code])])
+    }
+
+    @Test func aTableKeepsEachRowOnItsOwnLine() {
+        let table = "| Owner | Task |\n|---|---|\n| Dana | Deck |"
+        #expect(Markdown.document("Owners:\n" + table).plainText == "Owners:\n" + table)
+    }
+
     @Test func documentJSONRoundTrips() throws {
         let doc = Markdown.document("## Hi\n\n- [x] done")
         let decoded = try #require(PMNode.decode(doc.encoded()))
@@ -164,6 +239,59 @@ struct NoteWriterTests {
         #expect(try database.meeting(meeting.id)?.title == "Acme QBR")
     }
 
+    @Test func renamingWhileNotesFinishKeepsBoth() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pool = try AppDatabase.open(at: dir.appendingPathComponent("db.sqlite"), backups: dir)
+        for _ in 0..<50 {
+            let meeting = Meeting(title: "Zoom call", state: .writingNotes)
+            try pool.insert(meeting)
+            var note = EnhancedNote(meetingId: meeting.id, templateId: "general", providerId: "builtin", model: "m")
+            note.status = .done
+            let finished = note
+            async let notes: Void = Task.detached { try pool.finishEnhanced(finished, suggestedTitle: "AI title") }.value
+            async let rename: Void = Task.detached { try pool.renameMeeting(meeting.id, to: "Acme QBR") }.value
+            _ = try await (notes, rename)
+            let saved = try #require(try pool.meeting(meeting.id))
+            #expect(saved.currentEnhancedId == note.id)
+            #expect(saved.title == "Acme QBR")
+            #expect(saved.titleSource == .user)
+        }
+    }
+
+    @Test func stoppingKeepsAnEndAndLengthAlreadyStored() throws {
+        let end = Date(timeIntervalSince1970: 1_000)
+        try database.recordingStopped(meeting.id, endAt: end, durationMs: 60_000)
+        try database.recordingStopped(meeting.id, endAt: Date(), durationMs: 1)
+        let saved = try #require(try database.meeting(meeting.id))
+        #expect(saved.state == .transcribing)
+        #expect(saved.durationMs == 2_700_000)
+        #expect(saved.endAt == end)
+    }
+
+    @Test func aFirstLineThatIsASectionIsNotTheTitle() async throws {
+        _ = try await writer(FakeChat(chunks: ["# Summary\n\n- Acme renews if SSO ships by Q1"])).write(meeting.id)
+        #expect(try database.meeting(meeting.id)?.title == meeting.title)
+        #expect(try database.enhancedNotes(meeting.id).first?.markdown == "# Summary\n\n- Acme renews if SSO ships by Q1")
+    }
+
+    @Test func reasoningBeforeABareThinkCloseIsDropped() async throws {
+        let answer = ["Okay, the user wants notes.\n</thi", "nk>\n\n# Acme renewal\n\n## Summary\n\n- a"]
+        _ = try await writer(FakeChat(chunks: answer)).write(meeting.id)
+        #expect(try database.meeting(meeting.id)?.title == "Acme renewal")
+        #expect(try database.enhancedNotes(meeting.id).first?.markdown == "## Summary\n\n- a")
+    }
+
+    @Test("an answer wrapped in a code fence is saved as notes with its title", arguments: ["```", "```markdown", "```md"])
+    func aFencedAnswerIsNotes(fence: String) async throws {
+        _ = try await writer(FakeChat(chunks: ["\(fence)\n# Acme renewal\n\n## Summary\n\n- SSO by Q1\n```"])).write(meeting.id)
+        #expect(try database.meeting(meeting.id)?.title == "Acme renewal")
+        let note = try #require(try database.enhancedNotes(meeting.id).first)
+        #expect(note.markdown == "## Summary\n\n- SSO by Q1")
+        #expect(note.doc.flatMap(PMNode.decode)?.content?.first?.type == "heading")
+    }
+
     @Test func typedNotesDriveAuthorship() async throws {
         try database.saveUserNote(UserNote(meetingId: meeting.id, doc: nil, markdown: "acme renews if SSO by Q1"))
         _ = try await writer(FakeChat(chunks: ["# T\n\n## Summary\n\nAcme renews if SSO ships by Q1.\n\nThey asked about seats."])).write(meeting.id)
@@ -179,6 +307,13 @@ struct NoteWriterTests {
         }
         #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
+    }
+
+    @Test func aFailedVersionKeepsEveryWordThatArrived() async throws {
+        await #expect(throws: ProviderError.unreachable) {
+            _ = try await writer(FakeChat(chunks: ["# T\n\n## Summary\n", "- a", "x"], failAfter: 2)).write(meeting.id)
+        }
+        #expect(try database.enhancedNotes(meeting.id).first?.markdown == "## Summary\n- a")
     }
 
     @Test func cloudNeedsConsentOnce() async throws {
@@ -198,6 +333,54 @@ struct NoteWriterTests {
         #expect(note.status == .done)
         #expect(note.errorCode == "truncated")
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == note.id)
+    }
+
+    @Test func aTitleOnlyAnswerCutOffAtItsLimitFailsAndKeepsTheEarlierNotes() async throws {
+        guard case .written(let good) = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) else {
+            Issue.record("not written")
+            return
+        }
+        await #expect(throws: ProviderError.truncated) {
+            _ = try await writer(FakeChat(chunks: ["# Acme renewal"], finish: .length)).write(meeting.id)
+        }
+        #expect(try database.meeting(meeting.id)?.currentEnhancedId == good)
+        #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
+    }
+
+    @Test func anAnswerCutOffWhileStillReasoningFailsAndKeepsTheEarlierNotes() async throws {
+        guard case .written(let good) = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) else {
+            Issue.record("not written")
+            return
+        }
+        await #expect(throws: ProviderError.truncated) {
+            _ = try await writer(FakeChat(chunks: ["Okay, let me look at the transcript. The customer said"], finish: .length))
+                .write(meeting.id)
+        }
+        #expect(try database.meeting(meeting.id)?.currentEnhancedId == good)
+        #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
+    }
+
+    @Test func notesCutOffAfterTheirFirstSectionAreKept() async throws {
+        _ = try await writer(FakeChat(chunks: ["## Summary\n\n- Acme renews if SSO ships"], finish: .length)).write(meeting.id)
+        let note = try #require(try database.enhancedNotes(meeting.id).first)
+        #expect(note.status == .done)
+        #expect(note.errorCode == "truncated")
+    }
+
+    @Test func anEmptyAnswerFails() async throws {
+        await #expect(throws: ProviderError.truncated) { _ = try await writer(FakeChat(chunks: [])).write(meeting.id) }
+        #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
+    }
+
+    @Test func aFailedFinalSaveMarksTheVersionFailed() async throws {
+        try await database.writer.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER fail_done BEFORE UPDATE ON enhanced WHEN NEW.status = 'done'
+                BEGIN SELECT RAISE(ABORT, 'disk full'); END
+                """)
+        }
+        await #expect(throws: (any Error).self) { _ = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) }
+        #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
     }
 
     @Test func aModelThatIsNotReadyAddsNoVersion() async throws {
@@ -251,6 +434,35 @@ struct NoteWriterTests {
         try longCall(minutes: 30)
         _ = try await writer(smallModel(context: 8_192, summaryFinish: .length), context: 8_192).write(meeting.id)
         #expect(try database.enhancedNotes(meeting.id).first?.status == .done)
+    }
+
+    @Test func partSummariesDropReasoningBeforeABareThinkClose() async throws {
+        try longCall(minutes: 30)
+        let prompts = Recorded<String>()
+        let provider = ScriptedChat { request, continuation in
+            if request.messages.first?.content == NotesPrompt.partSystem {
+                continuation.answer("Okay, the user wants bullets.\n</think>\n- [00:05] A point")
+            } else {
+                await prompts.add(request.messages.last?.content ?? "")
+                continuation.answer("# T\n\n- a")
+            }
+        }
+        _ = try await writer(provider, context: 8_192).write(meeting.id)
+        let prompt = try #require(await prompts.values.last)
+        #expect(prompt.contains("- [00:05] A point"))
+        #expect(!prompt.contains("</think>"))
+    }
+
+    @Test func aPartSummaryCutOffBeforeAnyTextFails() async throws {
+        try longCall(minutes: 30)
+        let provider = ScriptedChat { request, continuation in
+            if request.messages.first?.content == NotesPrompt.partSystem {
+                continuation.answer("", .length)
+            } else {
+                continuation.answer("# T\n\n- a")
+            }
+        }
+        await #expect(throws: ProviderError.truncated) { _ = try await writer(provider, context: 8_192).write(meeting.id) }
     }
 
     @Test func summariesThatNeverShrinkStopAsTooLong() async throws {
@@ -328,10 +540,10 @@ struct KeychainTests {
     @Test func storesAndDeletesKeys() throws {
         let keychain = Keychain(service: "io.github.kurtjallo.Honeycomb.tests.\(UUID().uuidString)")
         try keychain.set("sk-one", account: "openai")
-        #expect(keychain.get(account: "openai") == "sk-one")
+        #expect(try keychain.read(account: "openai") == "sk-one")
         try keychain.set("sk-two", account: "openai")
-        #expect(keychain.get(account: "openai") == "sk-two")
+        #expect(try keychain.read(account: "openai") == "sk-two")
         keychain.deleteAll()
-        #expect(keychain.get(account: "openai") == nil)
+        #expect(try keychain.read(account: "openai") == nil)
     }
 }

@@ -17,6 +17,7 @@ extension Color {
     static let selection = Color(light: 0xFAE6B0, dark: 0x3E3215)
     static let recording = Color(light: 0xFF3B30, dark: 0xFF453A)
     static let recordingText = Color(light: 0xC42B1C, dark: 0xFF6B61)
+    static let recordingFill = Color(light: 0xD70015, dark: 0xD70015)
     static let warning = Color(light: 0xC2410C, dark: 0xFF8A4C)
     static let warningSubtle = Color(light: 0xFDEBDD, dark: 0x3D2617)
 
@@ -48,31 +49,21 @@ enum AppearanceChoice: String, CaseIterable, Identifiable {
         }
     }
 
-    /// `nil` leaves the window on the system appearance.
-    var colorScheme: ColorScheme? {
+    var appearance: NSAppearance? {
         switch self {
         case .system: nil
-        case .light: .light
-        case .dark: .dark
-        }
-    }
-
-    func isDark(system: ColorScheme) -> Bool {
-        switch self {
-        case .system: system == .dark
-        case .light: false
-        case .dark: true
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
         }
     }
 }
 
-/// Panels built with `NSHostingView` are not inside a scene, so they do not inherit the window's
-/// `preferredColorScheme`. This is the one place those roots, and the scenes, read the setting.
+/// Not `preferredColorScheme`: its views keep the old scheme after it goes back to nil.
 private struct HoneycombAppearance: ViewModifier {
     @AppStorage(AppearanceChoice.defaultsKey) private var appearance = AppearanceChoice.system
 
     func body(content: Content) -> some View {
-        content.preferredColorScheme(appearance.colorScheme)
+        content.onChange(of: appearance, initial: true) { NSApp.appearance = appearance.appearance }
     }
 }
 
@@ -113,7 +104,7 @@ struct HoneyButtonStyle: ButtonStyle {
         }
 
         private var fill: Color {
-            if isRecording { return .recording }
+            if isRecording { return .recordingFill }
             return hovering || configuration.isPressed ? .accentHover : .accent
         }
     }

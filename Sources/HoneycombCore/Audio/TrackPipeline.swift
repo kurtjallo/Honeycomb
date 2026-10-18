@@ -43,6 +43,7 @@ final class TrackPipeline: @unchecked Sendable {
     private var writer: AACSegmentWriter?
     private var current: SegmentMeta?
     private var timer: DispatchSourceTimer?
+    private var hungStop: DispatchSemaphore?
     private let readBuffer: UnsafeMutablePointer<Float>
     private let readCapacity = 96_000
 
@@ -67,6 +68,11 @@ final class TrackPipeline: @unchecked Sendable {
 
     func begin() throws {
         try queue.sync {
+            // Fail at once rather than wait on the session actor; the capture health retries pace the attempts.
+            if let hungStop {
+                guard hungStop.wait(timeout: .now()) == .success else { throw RecorderError("previous stop still running") }
+                self.hungStop = nil
+            }
             let sink = AudioSink()
             let clock = self.clock
             let emit = self.emit
@@ -84,14 +90,15 @@ final class TrackPipeline: @unchecked Sendable {
     /// Stops the recorder, writes what is left, and returns the closed segment, if any audio arrived.
     @discardableResult
     func end() -> SegmentMeta? {
-        let timer = queue.sync { () -> DispatchSourceTimer? in
+        let (timer, began) = queue.sync { () -> (DispatchSourceTimer?, Bool) in
             let timer = self.timer
             self.timer = nil
-            return timer
+            return (timer, sink != nil)
         }
         timer?.cancel()
-        stopRecorder()
+        let hung = began ? stopRecorder() : nil
         return queue.sync {
+            if let hung { hungStop = hung }
             drain()
             let closed = closeSegment()
             sink = nil
@@ -101,16 +108,16 @@ final class TrackPipeline: @unchecked Sendable {
     }
 
     /// Core Audio teardown can hang, so give up after the time limit and keep what was written.
-    private func stopRecorder() {
+    private func stopRecorder() -> DispatchSemaphore? {
         let done = DispatchSemaphore(value: 0)
         let recorder = self.recorder
         DispatchQueue.global(qos: .userInitiated).async {
             recorder.stop()
             done.signal()
         }
-        if done.wait(timeout: .now() + stopTimeout) == .timedOut {
-            Log.error("recorder.stop_timeout", ["channel": .code(channel == .me ? "me" : "them")])
-        }
+        guard done.wait(timeout: .now() + stopTimeout) == .timedOut else { return nil }
+        Log.error("recorder.stop_timeout", ["channel": .code(channel == .me ? "me" : "them")])
+        return done
     }
 
     private func drain() {

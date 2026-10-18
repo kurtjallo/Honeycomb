@@ -15,8 +15,10 @@ final class EditorHost: NSObject {
     let webView: WKWebView
     private(set) var isReady = false
     private var pending: [(String, [String: Any])] = []
-    private var lastLoad: [String: Any]?
-    private var onDocChanged: ((PMNode) -> Void)?
+    private var shown: [String: [String: Any]] = [:]
+    private static let replayed = ["load", "setSources", "setTheme"]
+    private var loadID = 0
+    private var saves: [Int: (PMNode) -> Void] = [:]
     private var onSourceClicked: ((String, CGRect) -> Void)?
 
     override init() {
@@ -44,11 +46,13 @@ final class EditorHost: NSObject {
     /// Shows a document. `onChange` gets the user's edits, debounced by the page.
     func load(_ doc: PMNode?, editable: Bool, placeholder: String, onChange: ((PMNode) -> Void)?,
               onSource: ((String, CGRect) -> Void)? = nil) {
-        onDocChanged = onChange
+        loadID += 1
+        saves[loadID] = onChange
         onSourceClicked = onSource
-        var payload: [String: Any] = ["mode": editable ? "edit" : "readonly", "placeholder": placeholder]
+        var payload: [String: Any] = ["loadId": loadID, "mode": editable ? "edit" : "readonly", "placeholder": placeholder]
         payload["doc"] = doc.flatMap(Self.object) ?? NSNull()
-        lastLoad = payload
+        // Queued stream messages belong to the document this load replaces, and "ready" replays the load before them.
+        pending.removeAll { $0.0 == "streamUpdate" || $0.0 == "streamDone" }
         send("load", payload)
     }
 
@@ -59,7 +63,8 @@ final class EditorHost: NSObject {
 
     func streamDone(_ doc: PMNode) {
         let object = Self.object(doc) ?? NSNull()
-        lastLoad = ["mode": "edit", "doc": object]
+        shown["load"]?["mode"] = "edit"
+        shown["load"]?["doc"] = object
         send("streamDone", ["doc": object])
     }
 
@@ -71,20 +76,54 @@ final class EditorHost: NSObject {
         send("setTheme", ["appearance": dark ? "dark" : "light", "fontSize": fontSize, "underlineAI": underlineAI])
     }
 
+    var isFocused: Bool {
+        (webView.window?.firstResponder as? NSView)?.isDescendant(of: webView) == true
+    }
+
     func focus() {
         send("focus", [:])
     }
 
+    func flush() async {
+        guard isReady else { return }
+        _ = try? await webView.callAsyncJavaScript(Self.receive, arguments: ["envelope": Self.envelope("flush", [:])],
+                                                   contentWorld: .page)
+    }
+
+    private static let receive = "return window.honeycomb.receive(envelope)"
+
+    private static func envelope(_ type: String, _ payload: [String: Any]) -> [String: Any] {
+        ["v": 1, "type": type, "payload": payload]
+    }
+
     private func send(_ type: String, _ payload: [String: Any]) {
+        if Self.replayed.contains(type) { shown[type] = payload }
         guard isReady else {
             pending.removeAll { $0.0 == type }
             pending.append((type, payload))
             return
         }
-        let envelope: [String: Any] = ["v": 1, "type": type, "payload": payload]
-        webView.callAsyncJavaScript("return window.honeycomb.receive(envelope)", arguments: ["envelope": envelope],
-                                    in: nil, in: .page) { result in
-            if case .failure = result { Log.error("editor.message_failed") }
+        webView.callAsyncJavaScript(Self.receive, arguments: ["envelope": Self.envelope(type, payload)],
+                                    in: nil, in: .page) { [weak self] result in
+            guard case .success(let reply) = result else { return Log.error("editor.message_failed") }
+            let ok = (reply as? [String: Any])?["ok"] as? Bool == true
+            if type == "load", let id = payload["loadId"] as? Int {
+                self?.loadReplied(id, ok: ok)
+            } else if !ok {
+                Log.error("editor.message_rejected")
+            }
+        }
+    }
+
+    private func loadReplied(_ id: Int, ok: Bool) {
+        if ok {
+            saves = saves.filter { $0.key >= id }
+            return
+        }
+        Log.error("editor.load_rejected")
+        saves[id] = nil
+        if id == loadID {
+            load(Markdown.document("These notes can't be shown."), editable: false, placeholder: "", onChange: nil)
         }
     }
 
@@ -118,14 +157,14 @@ extension EditorHost: WKScriptMessageHandlerWithReply {
                 return
             }
             isReady = true
-            let queued = pending
+            let queued = pending.filter { !Self.replayed.contains($0.0) }
             pending = []
-            if !queued.contains(where: { $0.0 == "load" }), let lastLoad { send("load", lastLoad) }
+            for type in Self.replayed { if let payload = shown[type] { send(type, payload) } }
             for (type, payload) in queued { send(type, payload) }
         case "docChanged":
-            if let doc = Self.node(payload["doc"]) {
-                lastLoad?["doc"] = payload["doc"]
-                onDocChanged?(doc)
+            if let id = payload["loadId"] as? Int, let doc = Self.node(payload["doc"]) {
+                if id == loadID { shown["load"]?["doc"] = payload["doc"] }
+                saves[id]?(doc)
             }
         case "linkClicked":
             if let href = payload["href"] as? String, Markdown.isSafeLink(href), let url = URL(string: href) {
@@ -151,10 +190,8 @@ extension EditorHost: WKNavigationDelegate {
         return .cancel
     }
 
-    /// If the web process dies, reload and show the last saved document again.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         Log.error("editor.process_terminated")
-        if let lastLoad { pending = [("load", lastLoad)] }
         reload()
     }
 }
@@ -191,7 +228,6 @@ final class EditorSchemeHandler: NSObject, WKURLSchemeHandler {
 /// Puts the shared editor web view into a SwiftUI layout.
 struct EditorView: NSViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(AppearanceChoice.defaultsKey) private var appearance = AppearanceChoice.system
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
@@ -203,7 +239,7 @@ struct EditorView: NSViewRepresentable {
     /// editor after it made the incoming one, and taking the web view back would carry it out of
     /// the window with the outgoing view.
     func updateNSView(_ view: NSView, context: Context) {
-        EditorHost.shared.setTheme(dark: appearance.isDark(system: colorScheme))
+        EditorHost.shared.setTheme(dark: colorScheme == .dark)
     }
 
     private func attach(to container: NSView) {

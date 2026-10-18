@@ -30,8 +30,8 @@ struct HomeView: View {
                                         model.selection = meeting.id
                                     }
                                     .contextMenu {
-                                        Button("Delete", role: .destructive) { model.delete(meeting) }
-                                            .disabled(meeting.id == model.recordingMeetingID)
+                                        Button("Delete…", role: .destructive) { model.meetingToDelete = meeting }
+                                            .disabled(!model.canDelete(meeting))
                                     }
                                 }
                             }
@@ -44,6 +44,14 @@ struct HomeView: View {
             .padding(.top, 16)
             .padding(.bottom, 48)
             .frame(maxWidth: .infinity)
+        }
+        .confirmationDialog("Delete “\(model.meetingToDelete?.title ?? "")”?",
+                            isPresented: Binding(get: { model.meetingToDelete != nil }, set: { if !$0 { model.meetingToDelete = nil } }),
+                            presenting: model.meetingToDelete) { meeting in
+            Button("Delete", role: .destructive) { model.delete(meeting) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Its notes, transcript, and recording are removed from this Mac. You can't undo this.")
         }
         .safeAreaInset(edge: .bottom) {
             if let activity = model.modelActivity {

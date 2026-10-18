@@ -4,7 +4,8 @@ import Security
 /// Where provider API keys are kept. Tests use an in-memory fake, so they never touch the login keychain.
 public protocol SecretStore: Sendable {
     func set(_ secret: String, account: String) throws
-    func get(account: String) -> String?
+    /// Nil only when no key is stored. A keychain that can't be read throws.
+    func read(account: String) throws -> String?
     func delete(account: String)
 }
 
@@ -33,13 +34,21 @@ public struct Keychain: SecretStore {
         guard status == errSecSuccess else { throw KeychainError.status(status) }
     }
 
-    public func get(account: String) -> String? {
+    public func read(account: String) throws -> String? {
         var query = baseQuery(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        return try Self.secret(status: status, result: result)
+    }
+
+    static func secret(status: OSStatus, result: AnyObject?) throws -> String? {
+        switch status {
+        case errSecSuccess: (result as? Data).flatMap { String(data: $0, encoding: .utf8) }
+        case errSecItemNotFound: nil
+        default: throw KeychainError.status(status)
+        }
     }
 
     public func delete(account: String) {

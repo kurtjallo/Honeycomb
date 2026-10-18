@@ -66,6 +66,8 @@ public enum ProviderError: Error, Equatable, Sendable {
     /// A 5xx.
     case server(status: Int)
     case truncated
+    /// The model refused, or the provider's safety filter stopped the answer.
+    case refused
     case cancelled
     case invalidResponse
     /// Plain http to a public address. Only loopback and private networks may skip TLS.
@@ -73,6 +75,8 @@ public enum ProviderError: Error, Equatable, Sendable {
     /// A base URL with no host, such as `localhost:11434` without `http://`.
     case invalidURL
     case timedOut
+    /// The API key is stored but can't be read: the keychain is locked, or access was denied.
+    case keychainUnavailable
 
     public var code: String {
         switch self {
@@ -85,19 +89,21 @@ public enum ProviderError: Error, Equatable, Sendable {
         case .badRequest: "bad_request"
         case .server: "server"
         case .truncated: "truncated"
+        case .refused: "refused"
         case .cancelled: "cancelled"
         case .invalidResponse: "invalid_response"
         case .insecureURL: "insecure_url"
         case .invalidURL: "invalid_url"
         case .timedOut: "timed_out"
+        case .keychainUnavailable: "keychain_unavailable"
         }
     }
 
     /// Reads back a stored `code`, such as a failed meeting's detail. Cases with values get none.
     public init?(code: String) {
         let all: [ProviderError] = [.unreachable, .unauthorized, .modelNotFound, .contextTooLong, .rateLimited(retryAfter: nil),
-                                    .outOfCredit, .badRequest, .server(status: 500), .truncated, .cancelled, .invalidResponse,
-                                    .insecureURL, .invalidURL, .timedOut]
+                                    .outOfCredit, .badRequest, .server(status: 500), .truncated, .refused, .cancelled, .invalidResponse,
+                                    .insecureURL, .invalidURL, .timedOut, .keychainUnavailable]
         guard let match = all.first(where: { $0.code == code }) else { return nil }
         self = match
     }
@@ -114,11 +120,13 @@ public enum ProviderError: Error, Equatable, Sendable {
         case .badRequest: "The provider refused the request. Check the model in Settings → Models, or pick another."
         case .server: "The provider had a server error. Try again in a few minutes."
         case .truncated: "The model stopped before the notes were finished. Regenerate to try again."
+        case .refused: "The model or the provider's safety filter stopped the answer. Pick another model in Settings → Models."
         case .cancelled: "The request was cancelled."
         case .invalidResponse: "The provider sent a reply Honeycomb couldn't read. Check the base URL."
         case .insecureURL: "Use an https address. Plain http only works for this Mac and your local network."
         case .invalidURL: "Enter the full address, such as http://localhost:11434 or https://api.openai.com/v1."
         case .timedOut: "The provider took too long to answer. Check that the server is running, then try again."
+        case .keychainUnavailable: "Honeycomb couldn't read the API key because the keychain is locked or access was denied. Unlock your Mac, choose Allow when macOS asks about the key, then try again."
         }
     }
 

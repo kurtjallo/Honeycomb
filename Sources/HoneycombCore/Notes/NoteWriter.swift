@@ -62,27 +62,30 @@ public struct NoteWriter: Sendable {
                 raw += piece
                 if let lastWrite, ContinuousClock.now - lastWrite < .seconds(1) { return }
                 if lastWrite == nil { Log.info("notes.started", ["meeting": .id(meetingID)]) }
-                note.markdown = NotesPrompt.parseOutput(raw).body
+                note.markdown = NotesPrompt.parseOutput(raw, sections: input.template.sections).body
                 try database.saveEnhanced(note)
                 lastWrite = .now
             }
+            let output = NotesPrompt.parseOutput(raw, sections: input.template.sections)
+            if output.body.isEmpty { throw ProviderError.truncated }
+            // Notes open with a heading, so an answer cut off before its first one was still reasoning.
+            if finish == .length, output.title == nil, !output.body.hasPrefix("#") { throw ProviderError.truncated }
+            let doc = Authorship.apply(to: Markdown.document(output.body), userNotes: input.userNotes)
+            note.doc = doc.encoded()
+            note.markdown = output.body
+            note.status = .done
+            note.errorCode = finish == .length ? ProviderError.truncated.code : nil
+            try database.finishEnhanced(note, suggestedTitle: output.title)
         } catch {
             let cancelled = error is CancellationError || error as? ProviderError == .cancelled
             if lastWrite != nil {
+                note.markdown = NotesPrompt.parseOutput(raw, sections: input.template.sections).body
                 note.status = cancelled ? .canceled : .failed
                 note.errorCode = (error as? ProviderError)?.code ?? "failed"
                 try? database.saveEnhanced(note)
             }
             throw cancelled ? CancellationError() : error
         }
-
-        let output = NotesPrompt.parseOutput(raw)
-        let doc = Authorship.apply(to: Markdown.document(output.body), userNotes: input.userNotes)
-        note.doc = doc.encoded()
-        note.markdown = output.body
-        note.status = .done
-        note.errorCode = finish == .length ? ProviderError.truncated.code : nil
-        try database.finishEnhanced(note, suggestedTitle: output.title)
         Log.info("notes.finished", ["meeting": .id(meetingID), "truncated": .bool(finish == .length)])
         return .written(note.id)
     }
@@ -110,8 +113,9 @@ public struct NoteWriter: Sendable {
                     ChatMessage(.system, NotesPrompt.partSystem), ChatMessage(.user, part),
                 ], maxTokens: NotesPrompt.outputTokens)
                 var summary = ""
-                // A summary cut off at its length limit still covers most of its part.
-                _ = try await read(request, from: resolved.provider, for: meeting) { summary += $0 }
+                let finish = try await read(request, from: resolved.provider, for: meeting) { summary += $0 }
+                summary = NotesPrompt.answer(summary)
+                if finish == .length, summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw ProviderError.truncated }
                 summaries.append(summary)
             }
             text = summaries.joined(separator: "\n")

@@ -23,6 +23,16 @@ public struct InputDevice: Sendable, Equatable, Identifiable {
     }
 }
 
+public struct InputUse: Sendable, Equatable {
+    public let bundleID: String
+    public let devices: [AudioDeviceID]
+
+    public init(bundleID: String, devices: [AudioDeviceID]) {
+        self.bundleID = bundleID
+        self.devices = devices
+    }
+}
+
 /// Picks the mic to record. Follow the device the call app uses. Without one, avoid a Bluetooth
 /// mic when a built-in one exists: opening an AirPods mic drops AirPods playback to call quality.
 public enum InputDevicePicker {
@@ -36,6 +46,11 @@ public enum InputDevicePicker {
             return builtIn
         }
         return fallback
+    }
+
+    public static func inputsToFollow(_ uses: [InputUse], callApps: Set<String>) -> [AudioDeviceID] {
+        uses.filter { use in callApps.contains { CallAppCatalog.process(use.bundleID, belongsTo: $0) } }
+            .flatMap(\.devices)
     }
 }
 
@@ -63,19 +78,18 @@ public enum InputDevices {
         CA.defaultDevice(kAudioHardwarePropertyDefaultInputDevice)
     }
 
-    /// Input devices used by other processes that are recording right now, call apps first.
-    public static func inputsInUse(preferring bundleIDs: Set<String>) -> [AudioDeviceID] {
+    public static func inputsInUse(of bundleIDs: Set<String>) -> [AudioDeviceID] {
+        InputDevicePicker.inputsToFollow(uses(), callApps: bundleIDs)
+    }
+
+    public static func uses() -> [InputUse] {
         let own = ProcessInfo.processInfo.processIdentifier
-        var preferred: [AudioDeviceID] = []
-        var others: [AudioDeviceID] = []
-        for process in CA.processObjects {
+        return CA.processObjects.compactMap { process in
             guard CA.read(process, kAudioProcessPropertyIsRunningInput, default: UInt32(0)) == 1,
                   CA.read(process, kAudioProcessPropertyPID, default: pid_t(0)) != own
-            else { continue }
-            let devices = CA.objects(process, kAudioProcessPropertyDevices, scope: kAudioObjectPropertyScopeInput)
-            let bundle = CA.string(process, kAudioProcessPropertyBundleID) ?? ""
-            if bundleIDs.contains(where: { bundle.hasPrefix($0) }) { preferred += devices } else { others += devices }
+            else { return nil }
+            return InputUse(bundleID: CA.string(process, kAudioProcessPropertyBundleID) ?? "",
+                            devices: CA.objects(process, kAudioProcessPropertyDevices, scope: kAudioObjectPropertyScopeInput))
         }
-        return preferred + others
     }
 }

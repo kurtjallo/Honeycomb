@@ -4,6 +4,10 @@ public struct DetectionPolicy: Sendable, Equatable {
     public var askAfterMs: Int64 = 3_000
     /// After the recorded app lets go of the mic, wait this long before calling the call ended.
     public var endAfterMs: Int64 = 5_000
+    /// While no browser window title shows a meeting, read the titles again this often.
+    public var titleRetryMs: Int64 = 2_000
+    /// Stop reading titles this long after the first read, and stay quiet for that mic use.
+    public var titleGiveUpAfterMs: Int64 = 60_000
 
     public init() {}
 }
@@ -36,7 +40,7 @@ public struct CallPrompt: Sendable, Equatable {
 public enum DetectionEvent: Sendable, Equatable {
     case micStarted(key: String, bundleID: String, atMs: Int64)
     case micStopped(key: String, atMs: Int64)
-    case titleRead(key: String, title: String?)
+    case titleRead(key: String, titles: [String])
     case tick(atMs: Int64)
     case startNotes(key: String)
     case notNow(key: String)
@@ -52,6 +56,8 @@ public enum DetectionCommand: Sendable, Equatable {
     case startRecording(CallPrompt)
     /// The recorded call app let go of the mic: stop and write notes.
     case callEnded
+    /// The recorded call app took the mic back after `.callEnded`: keep recording.
+    case callResumed
 }
 
 /// Decides when to ask "Take notes?" and when a call has ended, from which apps use the mic.
@@ -60,10 +66,17 @@ public enum DetectionCommand: Sendable, Equatable {
 public struct DetectionMachine: Sendable {
     enum Phase: Sendable, Equatable {
         case waiting(sinceMs: Int64)
-        case readingTitle
+        case readingTitle(sinceMs: Int64, readMs: Int64)
+        case titleUnmatched(sinceMs: Int64, readMs: Int64)
         case prompted
         case quiet
         case recording
+    }
+
+    enum CallEnd: Sendable, Equatable {
+        case ongoing
+        case ending(sinceMs: Int64)
+        case ended
     }
 
     struct Activation: Sendable, Equatable {
@@ -78,7 +91,7 @@ public struct DetectionMachine: Sendable {
     private var activations: [String: Activation] = [:]
     private var isRecording = false
     private var recordedApp: CallApp?
-    private var endingSinceMs: Int64?
+    private var callEnd = CallEnd.ongoing
 
     public init(policy: DetectionPolicy = DetectionPolicy(), callApps: [CallApp], accessibilityTrusted: Bool) {
         self.policy = policy
@@ -86,12 +99,8 @@ public struct DetectionMachine: Sendable {
         self.accessibilityTrusted = accessibilityTrusted
     }
 
-    /// Browsers and some apps record from helper processes, such as "com.google.Chrome.helper".
-    static let aliases = ["com.apple.avconferenced": "com.apple.FaceTime"]
-
     public func callApp(for bundleID: String) -> CallApp? {
-        let resolved = Self.aliases[bundleID] ?? bundleID
-        return callApps.first { resolved == $0.bundleId || resolved.hasPrefix($0.bundleId + ".") }
+        callApps.first { CallAppCatalog.process(bundleID, belongsTo: $0.bundleId) }
     }
 
     public mutating func handle(_ event: DetectionEvent) -> [DetectionCommand] {
@@ -99,9 +108,10 @@ public struct DetectionMachine: Sendable {
         case .micStarted(let key, let bundleID, let at):
             guard let app = callApp(for: bundleID), app.ask else { return [] }
             if isRecording, app.bundleId == recordedApp?.bundleId {
-                endingSinceMs = nil
+                let ended = callEnd == .ended
+                callEnd = .ongoing
                 activations[key] = Activation(app: app, phase: .recording)
-                return []
+                return ended ? [.callResumed] : []
             }
             if activations.values.contains(where: { $0.app.bundleId == app.bundleId && $0.phase == .quiet }) {
                 activations[key] = Activation(app: app, phase: .quiet)
@@ -116,14 +126,16 @@ public struct DetectionMachine: Sendable {
             if activation.phase == .prompted { commands.append(.hide(key: key)) }
             if activation.phase == .recording, isRecording,
                !activations.values.contains(where: { $0.phase == .recording }) {
-                endingSinceMs = at
+                callEnd = .ending(sinceMs: at)
             }
             return commands
 
-        case .titleRead(let key, let title):
-            guard var activation = activations[key], activation.phase == .readingTitle else { return [] }
-            guard let site = MeetingSites.match(title) else {
-                activation.phase = .quiet
+        case .titleRead(let key, let titles):
+            guard var activation = activations[key], case .readingTitle(let since, let read) = activation.phase else {
+                return []
+            }
+            guard let site = titles.lazy.compactMap({ MeetingSites.match($0) }).first else {
+                activation.phase = .titleUnmatched(sinceMs: since, readMs: read)
                 activations[key] = activation
                 return []
             }
@@ -134,25 +146,36 @@ public struct DetectionMachine: Sendable {
 
         case .tick(let now):
             var commands: [DetectionCommand] = []
-            if let since = endingSinceMs, now - since >= policy.endAfterMs {
-                endingSinceMs = nil
+            if case .ending(let since) = callEnd, now - since >= policy.endAfterMs {
+                callEnd = .ended
                 commands.append(.callEnded)
             }
             for (key, activation) in activations {
-                guard case .waiting(let since) = activation.phase, now - since >= policy.askAfterMs else { continue }
                 var next = activation
-                switch activation.app.kind {
-                case .app:
-                    next.kind = .app(activation.app.name)
-                    next.phase = .prompted
-                    commands.append(.show(prompt(key, next)))
-                case .browser where accessibilityTrusted:
-                    next.phase = .readingTitle
-                    commands.append(.readTitle(key: key, bundleID: activation.app.bundleId))
-                case .browser:
-                    next.kind = .browser(activation.app.name)
-                    next.phase = .prompted
-                    commands.append(.show(prompt(key, next)))
+                switch activation.phase {
+                case .waiting(let since) where now - since >= policy.askAfterMs:
+                    switch activation.app.kind {
+                    case .app:
+                        next.kind = .app(activation.app.name)
+                        next.phase = .prompted
+                        commands.append(.show(prompt(key, next)))
+                    case .browser where accessibilityTrusted:
+                        next.phase = .readingTitle(sinceMs: now, readMs: now)
+                        commands.append(.readTitle(key: key, bundleID: activation.app.bundleId))
+                    case .browser:
+                        next.kind = .browser(activation.app.name)
+                        next.phase = .prompted
+                        commands.append(.show(prompt(key, next)))
+                    }
+                case .titleUnmatched(let since, let read) where now - read >= policy.titleRetryMs:
+                    if now - since >= policy.titleGiveUpAfterMs {
+                        next.phase = .quiet
+                    } else {
+                        next.phase = .readingTitle(sinceMs: since, readMs: now)
+                        commands.append(.readTitle(key: key, bundleID: activation.app.bundleId))
+                    }
+                default:
+                    continue
                 }
                 activations[key] = next
             }
@@ -160,7 +183,7 @@ public struct DetectionMachine: Sendable {
 
         case .startNotes(let key):
             guard var activation = activations[key], activation.phase == .prompted else { return [] }
-            activation.phase = .recording
+            activation.phase = .quiet
             activations[key] = activation
             return [.hide(key: key), .startRecording(prompt(key, activation))]
 
@@ -173,7 +196,7 @@ public struct DetectionMachine: Sendable {
 
         case .recordingStarted(let key):
             isRecording = true
-            endingSinceMs = nil
+            callEnd = .ongoing
             recordedApp = key.flatMap { activations[$0]?.app }
             if let key { activations[key]?.phase = .recording }
             return []
@@ -181,7 +204,7 @@ public struct DetectionMachine: Sendable {
         case .recordingStopped:
             isRecording = false
             recordedApp = nil
-            endingSinceMs = nil
+            callEnd = .ongoing
             for (key, activation) in activations where activation.phase == .recording {
                 activations[key]?.phase = .quiet
             }
@@ -195,7 +218,6 @@ public struct DetectionMachine: Sendable {
     }
 }
 
-/// Recognizes a web meeting from the browser's front window title.
 public enum MeetingSites {
     public static func match(_ title: String?) -> String? {
         guard let title else { return nil }

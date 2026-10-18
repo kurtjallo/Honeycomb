@@ -5,23 +5,17 @@ import HoneycombCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
 
+    /// The SwiftUI modifier sets the appearance only once the menu bar label renders, after the window can draw.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = UserDefaults.standard.string(forKey: AppearanceChoice.defaultsKey).flatMap(AppearanceChoice.init)?.appearance
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         model.launch()
     }
 
-    /// Quitting mid-call would cut the recording, so ask first.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard model.isRecording else { return .terminateNow }
-        let alert = NSAlert()
-        alert.messageText = "Stop and save the recording?"
-        alert.informativeText = "Honeycomb is recording a meeting. Quitting stops the recording and keeps what was captured."
-        alert.addButton(withTitle: "Stop and Quit")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
-        Task {
-            await model.stopRecording()
-            sender.reply(toApplicationShouldTerminate: true)
-        }
+        model.quitRequested()
         return .terminateLater
     }
 

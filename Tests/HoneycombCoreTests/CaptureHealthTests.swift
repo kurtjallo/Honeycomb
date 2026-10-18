@@ -115,6 +115,14 @@ struct CaptureHealthTests {
         #expect(machine.finalStatus(stoppedAtMs: 30_000) == .complete)
     }
 
+    @Test mutating func routeChangeWhileStartingKeepsTheStartupGrace() {
+        _ = machine.handle(.started(atMs: 0))
+        _ = machine.handle(.routeChanged(atMs: 200))
+        #expect(tick(from: 200, to: 1_900).isEmpty)
+        #expect(write(from: 2_000, to: 10_000).isEmpty)
+        #expect(machine.health == .ok)
+    }
+
     @Test mutating func samplesDrainedJustAfterARouteChangeDoNotProveItSurvived() {
         _ = machine.handle(.started(atMs: 0))
         _ = write(from: 100, to: 2_000)
@@ -144,6 +152,55 @@ struct CaptureHealthTests {
         #expect(write(from: now + 4_900, to: now + 5_100) == [.interruptionRecovered(resumedAtMs: now, attempts: 3)])
         #expect(machine.health == .ok)
         #expect(machine.finalStatus(stoppedAtMs: now + 5_100) == .recovered)
+    }
+
+    @Test mutating func writesDrainedBeforeARestartDoNotEndTheStartupGrace() {
+        _ = machine.handle(.started(atMs: 0))
+        _ = write(from: 100, to: 1_000)
+        #expect(tick(from: 1_000, to: 3_900).last == .restart(attempt: 1))
+        _ = machine.handle(.restartSucceeded(atMs: 3_920))
+        #expect(machine.handle(.wrote(atMs: 3_910, silent: false)).isEmpty)
+        #expect(tick(from: 3_950, to: 8_850).isEmpty)
+    }
+
+    @Test mutating func writesDrainedBeforeAFailedRestartDoNotReportLostTwice() {
+        _ = machine.handle(.started(atMs: 0))
+        _ = write(from: 100, to: 1_000)
+        _ = tick(from: 1_000, to: 3_900)
+        _ = machine.handle(.restartFailed(atMs: 3_950))
+        _ = tick(from: 4_000, to: 4_450)
+        _ = machine.handle(.restartFailed(atMs: 4_500))
+        _ = tick(from: 4_550, to: 6_500)
+        #expect(machine.handle(.restartFailed(atMs: 6_600)) == [.captureLost(atMs: 6_600)])
+        #expect(machine.handle(.wrote(atMs: 6_590, silent: false)).isEmpty)
+        #expect(tick(from: 6_600, to: 16_550).isEmpty)
+        #expect(machine.health == .lost)
+    }
+
+    mutating func retryWithoutAudio(from: Int64, to: Int64) -> [CaptureCommand] {
+        var commands: [CaptureCommand] = []
+        var now = from
+        while now < to {
+            let step = machine.handle(.tick(atMs: now))
+            commands += step
+            if step.contains(where: { if case .restart = $0 { true } else { false } }) {
+                commands += machine.handle(.restartSucceeded(atMs: now))
+            }
+            now += 50
+        }
+        return commands
+    }
+
+    @Test mutating func lostIsReportedOncePerLoss() {
+        _ = machine.handle(.started(atMs: 0))
+        let firstLoss = retryWithoutAudio(from: 0, to: 60_000).filter { if case .captureLost = $0 { true } else { false } }
+        #expect(firstLoss == [.captureLost(atMs: 22_500)])
+        #expect(machine.health == .lost)
+
+        _ = write(from: 60_000, to: 70_000)
+        #expect(machine.health == .ok)
+        let secondLoss = retryWithoutAudio(from: 70_000, to: 100_000).filter { if case .captureLost = $0 { true } else { false } }
+        #expect(secondLoss == [.captureLost(atMs: 90_400)])
     }
 
     @Test mutating func silenceOnlyWarns() {

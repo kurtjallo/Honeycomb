@@ -26,6 +26,28 @@ extension AppDatabase {
         }
     }
 
+    public func renameMeeting(_ id: UUID, to title: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "UPDATE meeting SET title = ?, title_source = ?, updated_at = ? WHERE id = ?",
+                           arguments: [title, TitleSource.user.rawValue, Date(), id])
+        }
+    }
+
+    public func setTemplate(_ id: UUID, _ templateId: String) throws {
+        try writer.write { db in
+            try db.execute(sql: "UPDATE meeting SET template_id = ?, updated_at = ? WHERE id = ?", arguments: [templateId, Date(), id])
+        }
+    }
+
+    public func recordingStopped(_ id: UUID, endAt: Date?, durationMs: Int64?) throws {
+        try writer.write { db in
+            try db.execute(sql: """
+                UPDATE meeting SET state = ?, end_at = COALESCE(end_at, ?), duration_ms = COALESCE(duration_ms, ?), updated_at = ?
+                WHERE id = ?
+                """, arguments: [MeetingState.transcribing, endAt, durationMs, Date(), id])
+        }
+    }
+
     public func meetings(in states: [MeetingState]) throws -> [Meeting] {
         try reader.read { db in
             try Meeting.filter(states.contains(Column("state"))).fetchAll(db)

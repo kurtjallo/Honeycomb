@@ -21,7 +21,9 @@ public enum NoteExport {
                 return "<li>" + box + (item.content ?? []).map { $0.type == "paragraph" ? inline($0.content ?? []) : block($0) }.joined() + "</li>"
             }.joined() + "</ul>"
         case "orderedList":
-            return "<ol>" + (node.content ?? []).map { item in
+            var start = ""
+            if case .int(let number) = node.attrs?["start"], number != 1 { start = " start=\"\(number)\"" }
+            return "<ol\(start)>" + (node.content ?? []).map { item in
                 "<li>" + (item.content ?? []).map { $0.type == "paragraph" ? inline($0.content ?? []) : block($0) }.joined() + "</li>"
             }.joined() + "</ol>"
         default:

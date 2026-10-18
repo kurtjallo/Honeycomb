@@ -18,16 +18,25 @@ export function start(scroller: HTMLElement): Editor {
     editorProps: { attributes: { 'aria-label': 'Notes' } },
   })
 
+  let loadId = 0
   let pendingDocChanged: ReturnType<typeof setTimeout> | undefined
+  const reportEdit = () => {
+    pendingDocChanged = undefined
+    post('docChanged', { loadId, doc: editor.getJSON() })
+  }
+  const flush = () => {
+    if (pendingDocChanged === undefined) return
+    clearTimeout(pendingDocChanged)
+    reportEdit()
+  }
   editor.on('update', ({ transaction }) => {
     if (originOf(transaction) === 'swift') return
     clearTimeout(pendingDocChanged)
-    pendingDocChanged = setTimeout(() => post('docChanged', { doc: editor.getJSON() }), docChangedDelayMs)
+    pendingDocChanged = setTimeout(reportEdit, docChangedDelayMs)
   })
 
   const replaceDoc = (doc: PMNode) => {
-    // An edit still waiting to be reported belongs to the document being replaced.
-    clearTimeout(pendingDocChanged)
+    flush()
     const { tr } = editor.state
     editor.view.dispatch(fromSwift(tr.replaceWith(0, tr.doc.content.size, doc.content)))
     // Undo must never bring back the replaced document. prosemirror-history has no reset,
@@ -38,10 +47,11 @@ export function start(scroller: HTMLElement): Editor {
   }
 
   const handlers: Handlers = {
-    load: ({ doc, mode, placeholder: text }) => {
+    load: ({ loadId: id, doc, mode, placeholder: text }) => {
       placeholder = text
       editor.setEditable(mode === 'edit', false)
       replaceDoc(doc)
+      loadId = id
       return { ok: true }
     },
     streamUpdate: ({ doc }) => {
@@ -68,6 +78,10 @@ export function start(scroller: HTMLElement): Editor {
       return { ok: true }
     },
     getDoc: () => ({ ok: true, doc: editor.getJSON() }),
+    flush: () => {
+      flush()
+      return { ok: true }
+    },
     focus: () => {
       editor.commands.focus('end')
       return { ok: true }

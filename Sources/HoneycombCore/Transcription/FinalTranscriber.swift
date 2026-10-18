@@ -4,9 +4,9 @@ import Foundation
 /// live view skipped and gives better line breaks from word timings.
 public struct FinalTranscriber: Sendable {
     let engine: any TranscriptionEngine
-    let detector: VoiceDetector
+    let detector: any SpeechRangeDetector
 
-    public init(engine: any TranscriptionEngine, detector: VoiceDetector) {
+    public init(engine: any TranscriptionEngine, detector: any SpeechRangeDetector) {
         self.engine = engine
         self.detector = detector
     }
@@ -20,6 +20,7 @@ public struct FinalTranscriber: Sendable {
                     continue
                 }
                 for range in try await detector.speechRanges(samples) {
+                    try Task.checkCancellation()
                     let start = max(0, Int(range.startMs * 16))
                     let end = min(samples.count, Int(range.endMs * 16))
                     guard end - start > 4_000 else { continue }
@@ -37,25 +38,36 @@ public struct FinalTranscriber: Sendable {
 }
 
 /// On laptop speakers, the mic also hears the other side, so their words show up twice.
-/// A "Me" line that overlaps a "Them" line in time and mostly repeats its words is marked duplicate.
 public enum Dedupe {
     public static func duplicateMeLines(_ lines: [TranscriptLine], windowMs: Int64 = 1_500,
-                                        threshold: Double = 0.6) -> Set<Int> {
+                                        threshold: Double = 0.8) -> Set<Int> {
         let them = lines.filter { $0.channel == .them }
         var duplicates = Set<Int>()
         for (index, line) in lines.enumerated() where line.channel == .me {
-            let words = wordSet(line.text)
-            guard words.count >= 2 else { continue }
-            let nearby = them.filter { $0.startMs <= line.endMs + windowMs && $0.endMs >= line.startMs - windowMs }
-            let heard = nearby.reduce(into: Set<String>()) { $0.formUnion(wordSet($1.text)) }
-            let shared = Double(words.intersection(heard).count) / Double(words.count)
+            let mine = words(line.text)
+            guard mine.count >= 2 else { continue }
+            let heard = them.filter { $0.startMs <= line.endMs + windowMs && $0.endMs >= line.startMs - windowMs }
+                .flatMap { words($0.text) }
+            let shared = Double(commonInOrder(mine, heard)) / Double(mine.count)
             if shared >= threshold { duplicates.insert(index) }
         }
         return duplicates
     }
 
-    static func wordSet(_ text: String) -> Set<String> {
-        Set(text.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init))
+    static func words(_ text: String) -> [String] {
+        text.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
+    }
+
+    static func commonInOrder(_ a: [String], _ b: [String]) -> Int {
+        var previous = [Int](repeating: 0, count: b.count + 1)
+        for word in a {
+            var current = [0]
+            for (j, other) in b.enumerated() {
+                current.append(word == other ? previous[j] + 1 : max(previous[j + 1], current[j]))
+            }
+            previous = current
+        }
+        return previous[b.count]
     }
 }
 
@@ -76,7 +88,8 @@ public enum DictionaryCorrector {
                 let (core, trailing) = splitPunctuation(window.joined(separator: " "))
                 let candidate = normalize(core)
                 if candidate != target, !candidate.isEmpty, candidate.first == target.first,
-                   matches(candidate, target, minSimilarity: minSimilarity) {
+                   matches(candidate, target, minSimilarity: minSimilarity,
+                           isName: looksLikeName(window, after: index > 0 ? words[index - 1] : nil)) {
                     words.replaceSubrange(index..<index + n, with: [term + trailing])
                     index += 1
                 } else {
@@ -91,24 +104,36 @@ public enum DictionaryCorrector {
         text.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    /// Close spelling, or a looser spelling that sounds the same ("leigh" and "lee").
-    static func matches(_ candidate: String, _ target: String, minSimilarity: Double) -> Bool {
+    static func matches(_ candidate: String, _ target: String, minSimilarity: Double, isName: Bool) -> Bool {
         let score = similarity(candidate, target)
-        return score >= minSimilarity || (score >= 0.6 && soundKey(candidate) == soundKey(target))
+        return score >= minSimilarity
+            || similarity(soundSpelling(candidate), soundSpelling(target)) >= minSimilarity
+            || (isName && score >= 0.6 && soundKey(candidate) == soundKey(target))
     }
 
-    /// A rough sound-alike key: common spelling swaps, then the consonants.
+    /// Speech recognition capitalizes a name mid-sentence but writes "been" or "time" in lowercase,
+    /// so only capitalized words that don't start a sentence get the looser sound-alike match.
+    static func looksLikeName(_ window: ArraySlice<String>, after previous: String?) -> Bool {
+        guard let last = previous?.last, !".!?".contains(last) else { return false }
+        return window.allSatisfy { $0.first?.isUppercase == true }
+    }
+
+    /// The consonants of the sound spelling, so "shawn" and "sean" are both "sn".
     static func soundKey(_ word: String) -> String {
-        var text = word
-        for (from, to) in [("gh", ""), ("ph", "f"), ("ck", "k"), ("q", "k"), ("x", "ks"), ("z", "s")] {
-            text = text.replacingOccurrences(of: from, with: to)
-        }
         var key = ""
-        for (index, character) in text.enumerated() {
+        for (index, character) in soundSpelling(word).enumerated() {
             if index > 0, "aeiouyhw".contains(character) { continue }
             if key.last != character { key.append(character) }
         }
         return key
+    }
+
+    static func soundSpelling(_ word: String) -> String {
+        var text = word
+        for (from, to) in [("gh", ""), ("ph", "f"), ("ck", "k"), ("q", "k"), ("x", "ks"), ("z", "s")] {
+            text = text.replacingOccurrences(of: from, with: to)
+        }
+        return text
     }
 
     static func splitPunctuation(_ text: String) -> (String, String) {

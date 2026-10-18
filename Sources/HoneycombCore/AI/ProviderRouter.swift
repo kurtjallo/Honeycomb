@@ -31,7 +31,13 @@ public struct ProviderRouter: Sendable {
 
     /// The adapter for a saved provider, with its key from Keychain.
     public func adapter(for record: ProviderRecord) throws -> any ChatProvider {
-        try adapter(for: record, apiKey: record.keyRef.flatMap { keychain.get(account: $0) })
+        let key: String?
+        do {
+            key = try record.keyRef.flatMap { try keychain.read(account: $0) }
+        } catch {
+            throw ProviderError.keychainUnavailable
+        }
+        return try adapter(for: record, apiKey: key)
     }
 
     /// The adapter for a provider that may not be saved yet, for "Test connection".

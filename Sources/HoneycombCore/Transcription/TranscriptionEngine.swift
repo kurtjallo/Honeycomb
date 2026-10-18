@@ -30,6 +30,10 @@ public protocol TranscriptionEngine: Sendable {
     func release() async
 }
 
+public protocol SpeechRangeDetector: Sendable {
+    func speechRanges(_ samples: [Float]) async throws -> [(startMs: Int64, endMs: Int64)]
+}
+
 /// One transcript line on the session clock.
 public struct TranscriptLine: Sendable, Equatable, Identifiable {
     public var id: String { "\(channel.rawValue)-\(startMs)" }

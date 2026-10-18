@@ -56,7 +56,7 @@ struct EndToEndTests {
         }
         print("E2E cut off after \(streaming.markdown.count) characters")
 
-        await host.setRecording(true)
+        host.gate.set(true)
         await pipeline.recordingStarted()
         try await Task.sleep(for: .seconds(3))
         let during = try #require(try database.meeting(id))
@@ -64,7 +64,7 @@ struct EndToEndTests {
         #expect(during.currentEnhancedId == nil, "cut-off notes are not made current")
         #expect(finishedDuring.isEmpty, "cut-off notes are not saved as finished: \(finishedDuring.map(\.markdown.count))")
 
-        await host.setRecording(false)
+        host.gate.set(false)
         await pipeline.nudge()
         let meeting = try await waitForState(id, [.ready, .failed], seconds: 300)
         #expect(meeting.state == .ready)
