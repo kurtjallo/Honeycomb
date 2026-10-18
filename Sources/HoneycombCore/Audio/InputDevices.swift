@@ -82,7 +82,7 @@ public enum InputDevices {
     }
 
     /// Input devices that call apps are recording from right now.
-    public static func inputsInUse(preferring bundleIDs: Set<String>) -> [AudioDeviceID] {
+    public static func inputsInUse(of bundleIDs: Set<String>) -> [AudioDeviceID] {
         InputDevicePicker.inputsToFollow(uses(), callApps: bundleIDs)
     }
 

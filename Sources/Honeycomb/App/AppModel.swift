@@ -226,7 +226,7 @@ final class AppModel {
     nonisolated static func makeRecorders() -> [any TrackRecorder] {
         let apps = Set(CallAppCatalog.builtIn.map(\.bundleId))
         let picked = InputDevicePicker.pick(devices: InputDevices.all(), defaultInput: InputDevices.defaultInput,
-                                            callAppInputs: InputDevices.inputsInUse(preferring: apps))
+                                            callAppInputs: InputDevices.inputsInUse(of: apps))
         let tapIncludesOutput = UserDefaults.standard.bool(forKey: "systemAudioIncludesOutput")
         return [MicRecorder(deviceID: picked?.id), SystemAudioRecorder(includeOutputDevice: tapIncludesOutput)]
     }
