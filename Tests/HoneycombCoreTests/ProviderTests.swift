@@ -199,15 +199,27 @@ private struct StreamChat: ChatProvider {
         #expect(bodies.map(\.temperature) == [nil, nil, nil, 0.3])
     }
 
-    @Test("other OpenAI-compatible servers keep max_tokens and temperature, whatever the model is called")
+    @Test("other OpenAI-compatible servers keep max_tokens and temperature for models that aren't OpenAI reasoning models")
     func otherServersKeepMaxTokens() async throws {
         let server = StubServer(.init(body: sse(content("ok"), "[DONE]")))
         let provider = OpenAICompatibleProvider(baseURL: server.url("/v1"), apiKey: nil, isLocal: true, session: server.session)
 
-        _ = try await provider.complete(ChatRequest(model: "gpt-5", messages: chat.messages))
+        _ = try await provider.complete(ChatRequest(model: "llama3.2", messages: chat.messages))
 
         let body = try SentBody(#require(server.requests.first))
         #expect(body.maxTokens == 2_000 && body.maxCompletionTokens == nil && body.temperature == 0.3)
+    }
+
+    @Test("OpenAI reasoning models get their parameters through any gateway, such as LiteLLM or OpenRouter",
+          arguments: ["gpt-5", "openai/gpt-5-mini", "o3"])
+    func reasoningModelsThroughGateways(model: String) async throws {
+        let server = StubServer(.init(body: sse(content("ok"), "[DONE]")))
+        let provider = OpenAICompatibleProvider(baseURL: server.url("/v1"), apiKey: "sk-test", isLocal: false, session: server.session)
+
+        _ = try await provider.complete(ChatRequest(model: model, messages: chat.messages))
+
+        let body = try SentBody(#require(server.requests.first))
+        #expect(body.maxTokens == nil && body.maxCompletionTokens != nil && body.temperature == nil)
     }
 
     @Test("an Ollama stream drops a <think> block whose tags are split across chunks")
