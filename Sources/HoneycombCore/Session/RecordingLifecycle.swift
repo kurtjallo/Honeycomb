@@ -50,10 +50,12 @@ public enum RecordingPhase: Sendable, Equatable {
         return capturing?.meetingID
     }
 
+    /// `.quitting` holds them so that clearing the gate on the way out never wakes the pipeline
+    /// into a model load the exit can't interrupt.
     public var holdsModels: Bool {
         switch self {
-        case .idle, .quitting: false
-        case .starting, .recording, .paused, .autoStopping, .stopping: true
+        case .idle: false
+        case .starting, .recording, .paused, .autoStopping, .stopping, .quitting: true
         }
     }
 
