@@ -40,7 +40,8 @@ public actor Pipeline {
     private var handlers = Handlers()
     private var loop: Task<Void, Never>?
     private var wake: CheckedContinuation<Void, Never>?
-    private var current: (job: Job, task: Task<Void, Error>, again: Bool)?
+    /// `onThisMac` is decided at claim, so a route changed while the job runs doesn't hide it from a recording.
+    private var current: (job: Job, onThisMac: Bool, task: Task<Void, Error>, again: Bool)?
 
     public init(database: AppDatabase, paths: Paths, host: ModelHost, policy: Policy = Policy()) {
         self.database = database
@@ -94,7 +95,7 @@ public actor Pipeline {
 
     /// A new recording takes priority: model work in progress on this Mac stops and goes back in the queue.
     public func recordingStarted() {
-        guard let current, usesThisMac(current.job.kind) else { return }
+        guard let current, current.onThisMac else { return }
         current.task.cancel()
     }
 
@@ -155,10 +156,10 @@ public actor Pipeline {
     /// job `current`: a recording that starts at any moment either keeps model jobs from being
     /// claimed or finds the job to cancel in `recordingStarted()`.
     private func claimNextJob() -> (Job, Task<Void, Error>)? {
-        let skipping: Set<JobKind> = host.gate.isRecording ? Set(JobKind.allCases.filter(usesThisMac)) : []
-        guard let job = try? database.claimNextJob(skipping: skipping) else { return nil }
+        let onThisMac = Set(JobKind.allCases.filter(usesThisMac))
+        guard let job = try? database.claimNextJob(skipping: host.gate.isRecording ? onThisMac : []) else { return nil }
         let task = Task { try await self.perform(job) }
-        current = (job, task, false)
+        current = (job, onThisMac.contains(job.kind), task, false)
         return (job, task)
     }
 
