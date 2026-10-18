@@ -12,6 +12,7 @@ public enum Markdown {
         var paragraph: [String] = []
         var listLines: [ListLine] = []
         var code: [String]?
+        var blankInList = false
 
         func flushParagraph() {
             guard !paragraph.isEmpty else { return }
@@ -50,10 +51,15 @@ public enum Markdown {
             }
             if trimmed.isEmpty || isRule(trimmed) {
                 flushParagraph()
-                if trimmed.isEmpty && !listLines.isEmpty { continue }
+                if trimmed.isEmpty && !listLines.isEmpty {
+                    blankInList = true
+                    continue
+                }
                 flushList()
                 continue
             }
+            let afterBlank = blankInList
+            blankInList = false
             if let heading = headingLine(trimmed) {
                 flushParagraph()
                 flushList()
@@ -68,7 +74,7 @@ public enum Markdown {
                 continue
             }
             if !listLines.isEmpty, line.hasPrefix("  ") {
-                listLines[listLines.count - 1].text = joinLine(listLines[listLines.count - 1].text, trimmed + lineEnd)
+                listLines[listLines.count - 1].addLine(trimmed + lineEnd, startsParagraph: afterBlank)
                 continue
             }
             flushList()
@@ -100,6 +106,18 @@ public enum Markdown {
         var checked: Bool
         var start: Int
         var text: String
+        var laterParagraphs: [String] = []
+
+        /// An indented line after a blank line starts another paragraph in the item.
+        mutating func addLine(_ line: String, startsParagraph: Bool) {
+            if startsParagraph {
+                laterParagraphs.append(line)
+            } else if laterParagraphs.isEmpty {
+                text = Markdown.joinLine(text, line)
+            } else {
+                laterParagraphs[laterParagraphs.count - 1] = Markdown.joinLine(laterParagraphs[laterParagraphs.count - 1], line)
+            }
+        }
     }
 
     static func listLine(_ line: String) -> ListLine? {
@@ -144,10 +162,12 @@ public enum Markdown {
                     continue
                 }
                 let line = lines[index]
-                let paragraph = PMNode(type: "paragraph", content: nonEmpty(inline(line.text.trimmingCharacters(in: .newlines))))
+                let paragraphs = ([line.text] + line.laterParagraphs).map { text in
+                    PMNode(type: "paragraph", content: nonEmpty(inline(text.trimmingCharacters(in: .newlines))))
+                }
                 var attrs: [String: JSONValue] = ["blockId": .string(newBlockID())]
                 if kind == .task { attrs["checked"] = .bool(line.checked) }
-                items.append(PMNode(type: kind == .task ? "taskItem" : "listItem", attrs: attrs, content: [paragraph]))
+                items.append(PMNode(type: kind == .task ? "taskItem" : "listItem", attrs: attrs, content: paragraphs))
                 index += 1
             }
             switch kind {
@@ -278,7 +298,7 @@ public enum Markdown {
             if case .int(let value) = node.attrs?["level"] { level = value }
             return String(repeating: "#", count: level) + " " + inlineMarkdown(node.content ?? [])
         case "paragraph":
-            return inlineMarkdown(node.content ?? [])
+            return indent + inlineMarkdown(node.content ?? []).replacingOccurrences(of: "\n", with: "\n" + indent)
         case "bulletList", "orderedList", "taskList":
             var number = 1
             if case .int(let start) = node.attrs?["start"] { number = start }
@@ -299,6 +319,7 @@ public enum Markdown {
                         let text = inlineMarkdown(child.content ?? []).replacingOccurrences(of: "\n", with: "\n" + indent + "  ")
                         lines.append(indent + marker + text)
                     } else {
+                        if child.type == "paragraph" { lines.append("") }
                         lines.append(render(child, indent: indent + "  "))
                     }
                 }
