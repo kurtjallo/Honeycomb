@@ -1,0 +1,209 @@
+/// Every timing the detection rules use.
+public struct DetectionPolicy: Sendable, Equatable {
+    /// A call app must use the mic this long before Honeycomb asks. Short blips are ignored.
+    public var askAfterMs: Int64 = 3_000
+    /// After the recorded app lets go of the mic, wait this long before calling the call ended.
+    public var endAfterMs: Int64 = 5_000
+
+    public init() {}
+}
+
+public enum PromptKind: Sendable, Equatable {
+    /// "Zoom call detected"
+    case app(String)
+    /// "Google Meet detected" in a browser, from the tab title.
+    case site(String)
+    /// "Call detected in Chrome": a browser without Accessibility permission to read the title.
+    case browser(String)
+
+    public var headline: String {
+        switch self {
+        case .app(let name): "\(name) call detected"
+        case .site(let name): "\(name) detected"
+        case .browser(let name): "Call detected in \(name)"
+        }
+    }
+}
+
+public struct CallPrompt: Sendable, Equatable {
+    public let key: String
+    public let app: CallApp
+    public let kind: PromptKind
+    /// Shown while another meeting is recording: "Stop current and start new".
+    public let replacesRecording: Bool
+}
+
+public enum DetectionEvent: Sendable, Equatable {
+    case micStarted(key: String, bundleID: String, atMs: Int64)
+    case micStopped(key: String, atMs: Int64)
+    case titleRead(key: String, title: String?)
+    case tick(atMs: Int64)
+    case startNotes(key: String)
+    case notNow(key: String)
+    /// A recording started by hand or from a prompt. `key` is the call it belongs to, if any.
+    case recordingStarted(key: String?)
+    case recordingStopped
+}
+
+public enum DetectionCommand: Sendable, Equatable {
+    case readTitle(key: String, bundleID: String)
+    case show(CallPrompt)
+    case hide(key: String)
+    case startRecording(CallPrompt)
+    /// The recorded call app let go of the mic: stop and write notes.
+    case callEnded
+}
+
+/// Decides when to ask "Take notes?" and when a call has ended, from which apps use the mic.
+/// Pure: the mic monitor reports events and the app carries out the commands. Only apps in the
+/// call-app table count, so dictation tools never trigger a prompt.
+public struct DetectionMachine: Sendable {
+    enum Phase: Sendable, Equatable {
+        case waiting(sinceMs: Int64)
+        case readingTitle
+        case prompted
+        case quiet
+        case recording
+    }
+
+    struct Activation: Sendable, Equatable {
+        var app: CallApp
+        var phase: Phase
+        var kind: PromptKind?
+    }
+
+    public let policy: DetectionPolicy
+    public var callApps: [CallApp]
+    public var accessibilityTrusted: Bool
+    private var activations: [String: Activation] = [:]
+    private var isRecording = false
+    private var recordedApp: CallApp?
+    private var endingSinceMs: Int64?
+
+    public init(policy: DetectionPolicy = DetectionPolicy(), callApps: [CallApp], accessibilityTrusted: Bool) {
+        self.policy = policy
+        self.callApps = callApps
+        self.accessibilityTrusted = accessibilityTrusted
+    }
+
+    /// Browsers and some apps record from helper processes, such as "com.google.Chrome.helper".
+    static let aliases = ["com.apple.avconferenced": "com.apple.FaceTime"]
+
+    public func callApp(for bundleID: String) -> CallApp? {
+        let resolved = Self.aliases[bundleID] ?? bundleID
+        return callApps.first { resolved == $0.bundleId || resolved.hasPrefix($0.bundleId + ".") }
+    }
+
+    public mutating func handle(_ event: DetectionEvent) -> [DetectionCommand] {
+        switch event {
+        case .micStarted(let key, let bundleID, let at):
+            guard let app = callApp(for: bundleID), app.ask else { return [] }
+            if isRecording, app.bundleId == recordedApp?.bundleId {
+                endingSinceMs = nil
+                activations[key] = Activation(app: app, phase: .recording)
+                return []
+            }
+            if activations.values.contains(where: { $0.app.bundleId == app.bundleId && $0.phase == .quiet }) {
+                activations[key] = Activation(app: app, phase: .quiet)
+                return []
+            }
+            activations[key] = Activation(app: app, phase: .waiting(sinceMs: at))
+            return []
+
+        case .micStopped(let key, let at):
+            guard let activation = activations.removeValue(forKey: key) else { return [] }
+            var commands: [DetectionCommand] = []
+            if activation.phase == .prompted { commands.append(.hide(key: key)) }
+            if activation.phase == .recording, isRecording,
+               !activations.values.contains(where: { $0.phase == .recording }) {
+                endingSinceMs = at
+            }
+            return commands
+
+        case .titleRead(let key, let title):
+            guard var activation = activations[key], activation.phase == .readingTitle else { return [] }
+            guard let site = MeetingSites.match(title) else {
+                activation.phase = .quiet
+                activations[key] = activation
+                return []
+            }
+            activation.kind = .site(site)
+            activation.phase = .prompted
+            activations[key] = activation
+            return [.show(prompt(key, activation))]
+
+        case .tick(let now):
+            var commands: [DetectionCommand] = []
+            if let since = endingSinceMs, now - since >= policy.endAfterMs {
+                endingSinceMs = nil
+                commands.append(.callEnded)
+            }
+            for (key, activation) in activations {
+                guard case .waiting(let since) = activation.phase, now - since >= policy.askAfterMs else { continue }
+                var next = activation
+                switch activation.app.kind {
+                case .app:
+                    next.kind = .app(activation.app.name)
+                    next.phase = .prompted
+                    commands.append(.show(prompt(key, next)))
+                case .browser where accessibilityTrusted:
+                    next.phase = .readingTitle
+                    commands.append(.readTitle(key: key, bundleID: activation.app.bundleId))
+                case .browser:
+                    next.kind = .browser(activation.app.name)
+                    next.phase = .prompted
+                    commands.append(.show(prompt(key, next)))
+                }
+                activations[key] = next
+            }
+            return commands
+
+        case .startNotes(let key):
+            guard var activation = activations[key], activation.phase == .prompted else { return [] }
+            activation.phase = .recording
+            activations[key] = activation
+            return [.hide(key: key), .startRecording(prompt(key, activation))]
+
+        case .notNow(let key):
+            guard var activation = activations[key] else { return [] }
+            let wasPrompted = activation.phase == .prompted
+            activation.phase = .quiet
+            activations[key] = activation
+            return wasPrompted ? [.hide(key: key)] : []
+
+        case .recordingStarted(let key):
+            isRecording = true
+            endingSinceMs = nil
+            recordedApp = key.flatMap { activations[$0]?.app }
+            if let key { activations[key]?.phase = .recording }
+            return []
+
+        case .recordingStopped:
+            isRecording = false
+            recordedApp = nil
+            endingSinceMs = nil
+            for (key, activation) in activations where activation.phase == .recording {
+                activations[key]?.phase = .quiet
+            }
+            return []
+        }
+    }
+
+    private func prompt(_ key: String, _ activation: Activation) -> CallPrompt {
+        CallPrompt(key: key, app: activation.app, kind: activation.kind ?? .app(activation.app.name),
+                   replacesRecording: isRecording)
+    }
+}
+
+/// Recognizes a web meeting from the browser's front window title.
+public enum MeetingSites {
+    public static func match(_ title: String?) -> String? {
+        guard let title else { return nil }
+        if title.hasPrefix("Meet - ") || title.hasPrefix("Meet – ") || title.contains("Google Meet") { return "Google Meet" }
+        if title.contains("Zoom Meeting") || title.contains("Zoom Workplace") || title.hasSuffix("- Zoom") { return "Zoom" }
+        if title.contains("Microsoft Teams") { return "Microsoft Teams" }
+        if title.localizedCaseInsensitiveContains("webex") { return "Webex" }
+        if title.contains("Slack") && title.localizedCaseInsensitiveContains("huddle") { return "Slack huddle" }
+        return nil
+    }
+}

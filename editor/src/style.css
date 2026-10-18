@@ -1,0 +1,281 @@
+/* Same values as Sources/Honeycomb/UI/Theme.swift. */
+:root {
+  color-scheme: light dark;
+  --font-size: 16px;
+  --text: light-dark(#1d1d1f, #f5f5f7);
+  --secondary-text: light-dark(#626267, #a1a1a6);
+  --ai-text: light-dark(#6b6459, #a69f93);
+  --link: light-dark(#8a5800, #ffcb52);
+  --background: light-dark(#fffdf8, #1e1e1e);
+  --selection: light-dark(#fae6b0, #3e3215);
+  --accent-subtle: light-dark(#fcefcc, #3b3018);
+  --accent-strong: light-dark(#c27a06, #f7b531);
+  --fill: light-dark(rgb(0 0 0 / 0.05), rgb(255 255 255 / 0.08));
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+/* Only #editor scrolls, so page coordinates sent to Swift match the visible web view. */
+body {
+  overflow: hidden;
+  background: var(--background);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: var(--font-size);
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  caret-color: var(--accent-strong);
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* Title and notes share one 640 pt column. The SwiftUI header centres it in the full pane, and
+   100vw includes a classic scrollbar, so the left margin is computed from 100vw, not with auto. */
+#editor {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  padding: 0 24px;
+  scrollbar-gutter: stable;
+}
+
+/* TipTap's base styles, which injectCSS would otherwise add as an inline <style>. */
+.ProseMirror {
+  position: relative;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  white-space: break-spaces;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0;
+}
+
+.ProseMirror [contenteditable="false"] {
+  white-space: normal;
+}
+
+.ProseMirror [contenteditable="false"] [contenteditable="true"] {
+  white-space: pre-wrap;
+}
+
+img.ProseMirror-separator {
+  display: inline !important;
+  border: none !important;
+  margin: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.ProseMirror-gapcursor {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+  margin: 0;
+}
+
+.ProseMirror-gapcursor::after {
+  content: "";
+  display: block;
+  position: absolute;
+  top: -2px;
+  width: 20px;
+  border-top: 1px solid currentColor;
+  animation: ProseMirror-cursor-blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes ProseMirror-cursor-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.ProseMirror-hideselection *::selection {
+  background: transparent;
+}
+
+.ProseMirror-hideselection * {
+  caret-color: transparent;
+}
+
+.ProseMirror-focused .ProseMirror-gapcursor {
+  display: block;
+}
+
+/* Note layout */
+.ProseMirror {
+  box-sizing: border-box;
+  min-height: 100%;
+  max-width: 640px;
+  margin: 0 0 0 max(0px, calc((100vw - 688px) / 2));
+  padding: 16px 8px 120px;
+  outline: none;
+}
+
+.ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.ProseMirror p {
+  margin: 0 0 8px;
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3 {
+  margin: 24px 0 8px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.ProseMirror h1 {
+  font-size: 20px;
+}
+
+.ProseMirror h2 {
+  font-size: 17px;
+}
+
+.ProseMirror h3 {
+  font-size: 16px;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  margin: 0 0 8px;
+  padding-left: 24px;
+}
+
+.ProseMirror li::marker {
+  color: var(--secondary-text);
+}
+
+.ProseMirror li > p {
+  margin: 0.15em 0;
+}
+
+.ProseMirror code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  background: var(--fill);
+}
+
+.ProseMirror a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--secondary-text);
+  pointer-events: none;
+}
+
+/* AI text */
+.ai {
+  color: var(--ai-text);
+}
+
+.ProseMirror a .ai,
+.ai a {
+  color: var(--link);
+}
+
+:root[data-underline-ai="true"] .ai {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+
+/* Task lists */
+.ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.2em;
+}
+
+.ProseMirror ul[data-type="taskList"] > li {
+  display: flex;
+  gap: 0.5em;
+}
+
+.ProseMirror ul[data-type="taskList"] > li > label {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 1.7em;
+  margin-top: 0.15em;
+  user-select: none;
+}
+
+.ProseMirror ul[data-type="taskList"] > li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] > li input[type="checkbox"] {
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Source buttons */
+.source-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3em;
+  height: 1.3em;
+  margin-left: 0.3em;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  vertical-align: -0.2em;
+  background: transparent;
+  color: var(--secondary-text);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.ProseMirror :hover > .source-button,
+.source-button:focus-visible {
+  opacity: 1;
+}
+
+.source-button:hover {
+  background: var(--accent-subtle);
+  color: var(--text);
+}
+
+.source-button svg {
+  width: 0.85em;
+  height: 0.85em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .source-button {
+    transition: none;
+  }
+}

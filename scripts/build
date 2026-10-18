@@ -1,0 +1,45 @@
+#!/bin/sh
+# Builds build/Honeycomb.app.
+#   ./scripts/build                 release build, signed with the Honeycomb certificate if present, else ad-hoc
+#   ./scripts/build --debug         debug build
+#   SIGN_ID="-" ./scripts/build     force ad-hoc signing
+#   VERSION=0.2.0 BUILD=7 ./scripts/build
+#   SKIP_EDITOR=1 ./scripts/build   reuse the last editor build
+set -eu
+cd "$(dirname "$0")/.."
+
+CONFIG=Release
+[ "${1:-}" = "--debug" ] && CONFIG=Debug
+VERSION="${VERSION:-0.1.0}"
+BUILD="${BUILD:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
+CERT="Honeycomb Signing"
+if [ -z "${SIGN_ID:-}" ]; then
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$CERT\""; then SIGN_ID="$CERT"; else SIGN_ID="-"; fi
+fi
+
+if [ -f editor/package.json ] && [ "${SKIP_EDITOR:-}" != 1 ]; then
+    [ -d editor/node_modules ] || npm --prefix editor ci --silent
+    npm --prefix editor run --silent build
+fi
+
+# xcodebuild, not swift build: MLX's Metal shaders only compile under xcodebuild.
+DERIVED=build/DerivedData
+for scheme in Honeycomb ToneHelper; do
+    xcodebuild -scheme "$scheme" -configuration "$CONFIG" -destination 'platform=macOS,arch=arm64' \
+        -derivedDataPath "$DERIVED" -skipPackagePluginValidation -skipMacroValidation -quiet build
+done
+PRODUCTS="$DERIVED/Build/Products/$CONFIG"
+
+APP=build/Honeycomb.app
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$PRODUCTS/Honeycomb" "$PRODUCTS/ToneHelper" "$APP/Contents/MacOS/"
+for bundle in "$PRODUCTS"/*.bundle; do cp -R "$bundle" "$APP/Contents/Resources/"; done
+[ -d editor/dist ] && cp -R editor/dist "$APP/Contents/Resources/Editor"
+[ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" Resources/Info.plist > "$APP/Contents/Info.plist"
+
+codesign --force --sign "$SIGN_ID" "$APP/Contents/MacOS/ToneHelper"
+codesign --force --sign "$SIGN_ID" "$APP"
+codesign --verify --strict "$APP"
+echo "Built $APP ($CONFIG, version $VERSION ($BUILD), signed with: $SIGN_ID)"
