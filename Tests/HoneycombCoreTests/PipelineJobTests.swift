@@ -17,7 +17,7 @@ struct PipelineJobTests {
         try database.seedBuiltIns()
         host = ModelHost(store: ModelStore(root: paths.models, database: nil))
         pipeline = Pipeline(database: database, paths: paths, host: host, policy: Self.fast)
-        meeting = Meeting(title: "Zoom call", state: .transcribing)
+        meeting = Meeting(title: "Zoom call", state: .ready)
         try database.insert(meeting)
     }
 
@@ -140,6 +140,19 @@ struct PipelineJobTests {
         #expect(job.status == .queued, "a quit right now leaves the job queued, not running")
         #expect(job.attempt == 0, "a normal quit doesn't count as a crash")
         await latch.open()
+    }
+
+    @Test func launchFinishesAStopThatNeverReachedThePipeline() async throws {
+        let stranded = Meeting(title: "Stopped, then crashed", state: .transcribing)
+        let queued = Meeting(title: "Waiting for notes", state: .transcribing)
+        try database.insert(stranded)
+        try database.insert(queued)
+        try database.enqueue(.enhance, meeting: queued.id)
+
+        await pipeline.start()
+        await pipeline.stop()
+        #expect(try database.jobs(for: stranded.id).map(\.kind) == [.finalizeAudio])
+        #expect(try database.jobs(for: queued.id).map(\.kind) == [.enhance])
     }
 
     @Test func aFailedJobRetriesAfterThePolicyDelay() async throws {
