@@ -389,12 +389,17 @@ final class AppModel {
         try? database?.setCurrentEnhanced(meeting.id, version.id)
     }
 
+    /// Saves the editor's last edits first, so the copy includes what the user just typed.
     func copyNotes(_ note: EnhancedNote) {
-        let doc = note.doc.flatMap(PMNode.decode) ?? Markdown.document(note.markdown)
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(NoteExport.html(doc), forType: .html)
-        pasteboard.setString(Markdown.markdown(doc), forType: .string)
+        Task {
+            await EditorHost.shared.flush()
+            let note = (try? database?.enhancedNotes(note.meetingId).first { $0.id == note.id }) ?? note
+            let doc = note.doc.flatMap(PMNode.decode) ?? Markdown.document(note.markdown)
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(NoteExport.html(doc), forType: .html)
+            pasteboard.setString(Markdown.markdown(doc), forType: .string)
+        }
     }
 
     func showSource(_ block: String, enhanced: UUID) {
