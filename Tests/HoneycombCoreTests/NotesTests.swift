@@ -95,6 +95,19 @@ struct MarkdownTests {
         #expect(NoteExport.html(Markdown.document("3. a\n4. b")) == "<ol start=\"3\"><li>a</li><li>b</li></ol>")
     }
 
+    @Test func aCodeFenceKeepsEachLineAsCode() {
+        let doc = Markdown.document("Run this:\n\n```sh\n# not a heading\n- not a list\n```", newBlockID: ids())
+        #expect(doc.content?.last == PMNode(type: "paragraph", attrs: ["blockId": .string("b2")], content: [
+            .text("# not a heading", marks: [.code]), PMNode(type: "hardBreak"), .text("- not a list", marks: [.code]),
+        ]))
+        #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
+    }
+
+    @Test func aTableKeepsEachRowOnItsOwnLine() {
+        let table = "| Owner | Task |\n|---|---|\n| Dana | Deck |"
+        #expect(Markdown.document("Owners:\n" + table).plainText == "Owners:\n" + table)
+    }
+
     @Test func documentJSONRoundTrips() throws {
         let doc = Markdown.document("## Hi\n\n- [x] done")
         let decoded = try #require(PMNode.decode(doc.encoded()))
