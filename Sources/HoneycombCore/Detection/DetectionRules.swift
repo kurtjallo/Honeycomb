@@ -96,7 +96,11 @@ public struct DetectionMachine: Sendable {
     }
 
     /// Browsers and some apps record from helper processes, such as "com.google.Chrome.helper".
-    static let aliases = ["com.apple.avconferenced": "com.apple.FaceTime"]
+    /// Safari records from WebKit's shared GPU process, which carries no Safari bundle ID.
+    static let aliases = [
+        "com.apple.avconferenced": "com.apple.FaceTime",
+        "com.apple.WebKit.GPU": "com.apple.Safari",
+    ]
 
     public func callApp(for bundleID: String) -> CallApp? {
         let resolved = Self.aliases[bundleID] ?? bundleID
