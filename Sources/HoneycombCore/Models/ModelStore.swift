@@ -105,7 +105,6 @@ public actor ModelStore {
     /// Retries network failures with growing waits, so a download resumes when Wi-Fi comes back.
     /// A checksum mismatch deletes the file and fails, because retrying would fetch the same bytes.
     private func fetchVerified(_ file: ModelFile, of spec: ModelSpec, to target: URL, completedBefore: Int64) async throws {
-        let waits: [Duration] = [.seconds(2), .seconds(5), .seconds(10), .seconds(30)]
         var failures = 0
         while true {
             try Task.checkCancellation()
@@ -116,16 +115,15 @@ public actor ModelStore {
                     Task { await self.set(id, .downloading(received: completedBefore + received, total: total)) }
                 }
                 break
-            } catch let error as DownloadError {
-                throw error
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 if Task.isCancelled { throw CancellationError() }
+                guard let wait = Self.retryWait(after: error, failures: failures) else { throw error }
                 let received = completedBefore + ((try? FileManager.default.attributesOfItem(atPath: target.path)[.size] as? Int64) ?? 0)
                 set(spec.id, .waitingForNetwork(received: received, total: spec.totalBytes))
                 Log.error("model.download_retry", ["attempt": .int(failures + 1)])
-                try await Task.sleep(for: waits[min(failures, waits.count - 1)])
+                try await Task.sleep(for: wait)
                 failures += 1
             }
         }
@@ -139,6 +137,13 @@ public actor ModelStore {
             Log.error("model.checksum_mismatch")
             throw DownloadError.checksumMismatch(file.path)
         }
+    }
+
+    /// The wait before trying a failed file again, or nil to fail the install.
+    static func retryWait(after error: any Error, failures: Int) -> Duration? {
+        let waits: [Duration] = [.seconds(2), .seconds(5), .seconds(10), .seconds(30)]
+        if error is DownloadError { return nil }
+        return waits[min(failures, waits.count - 1)]
     }
 
     private func set(_ id: String, _ state: State) {
