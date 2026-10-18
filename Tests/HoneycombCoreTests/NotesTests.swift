@@ -113,6 +113,12 @@ struct MarkdownTests {
         #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
     }
 
+    @Test func aBlankLineInACodeFenceRoundTrips() {
+        let doc = Markdown.document("```\nlet a = 1\n\nlet b = 2\n```", newBlockID: ids())
+        #expect(doc.content?.count == 1)
+        #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
+    }
+
     @Test func aTableKeepsEachRowOnItsOwnLine() {
         let table = "| Owner | Task |\n|---|---|\n| Dana | Deck |"
         #expect(Markdown.document("Owners:\n" + table).plainText == "Owners:\n" + table)
@@ -265,6 +271,15 @@ struct NoteWriterTests {
         _ = try await writer(FakeChat(chunks: answer)).write(meeting.id)
         #expect(try database.meeting(meeting.id)?.title == "Acme renewal")
         #expect(try database.enhancedNotes(meeting.id).first?.markdown == "## Summary\n\n- a")
+    }
+
+    @Test("an answer wrapped in a code fence is saved as notes with its title", arguments: ["```", "```markdown", "```md"])
+    func aFencedAnswerIsNotes(fence: String) async throws {
+        _ = try await writer(FakeChat(chunks: ["\(fence)\n# Acme renewal\n\n## Summary\n\n- SSO by Q1\n```"])).write(meeting.id)
+        #expect(try database.meeting(meeting.id)?.title == "Acme renewal")
+        let note = try #require(try database.enhancedNotes(meeting.id).first)
+        #expect(note.markdown == "## Summary\n\n- SSO by Q1")
+        #expect(note.doc.flatMap(PMNode.decode)?.content?.first?.type == "heading")
     }
 
     @Test func typedNotesDriveAuthorship() async throws {
