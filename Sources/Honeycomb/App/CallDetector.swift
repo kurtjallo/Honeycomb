@@ -28,7 +28,7 @@ final class CallDetector {
         monitor.start { change in
             Task { @MainActor [weak self] in self?.micChanged(change) }
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+        let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.machine.accessibilityTrusted = BrowserTitles.isTrusted
@@ -36,6 +36,10 @@ final class CallDetector {
                 self.model?.tick()
             }
         }
+        // Common modes keep the auto-stop countdown and the quit deadline running while a menu,
+        // an alert, or a pending quit holds the run loop in another mode.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
         sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { _ in
