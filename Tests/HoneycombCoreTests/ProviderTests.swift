@@ -347,6 +347,21 @@ private struct StreamChat: ChatProvider {
         #expect(server.requests.count == 1, "a timeout has used its whole budget, so it is not retried")
     }
 
+    @Test("SSE comment lines, such as OpenRouter's while a reasoning model thinks, keep the attempt alive")
+    func commentsKeepTheAttemptAlive() async {
+        let keepAlive = Data(": OPENROUTER PROCESSING\n\n".utf8)
+        let server = StubServer(.init(headers: eventStream, later: Array(repeating: keepAlive, count: 8)
+            + [sse(content("Notes"), #"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#, "[DONE]")]))
+        var policy = ProviderPolicy(firstToken: .milliseconds(400))
+        policy.silence = .milliseconds(400)
+        let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: false, session: server.session, policy: policy)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.error == nil, "900 ms of comments 100 ms apart outlast a 400 ms budget only if each one counts")
+        #expect(outcome.deltas == [.text("Notes"), .finished(.stop)])
+    }
+
     @Test("silence after text throws .timedOut and keeps the text")
     func silenceTimeout() async {
         let server = StubServer(.init(headers: eventStream, body: sse(content("Partial")), closes: false))
@@ -519,12 +534,20 @@ struct StubServer {
     }
 }
 
+/// URLProtocol predates Sendable. The stub sends a reply's later pieces in order from one task.
+private struct Unchecked<Value>: @unchecked Sendable {
+    let value: Value
+}
+
 /// Answers each request with the host's next reply. The last reply repeats.
 final class Stub: URLProtocol {
     struct Reply: Sendable {
         var status = 200
         var headers: [String: String] = [:]
         var body = Data()
+        /// Sent one at a time after `body`, `interval` apart, before the reply closes.
+        var later: [Data] = []
+        var interval: Duration = .milliseconds(100)
         var closes = true
     }
 
@@ -555,7 +578,18 @@ final class Stub: URLProtocol {
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if !reply.body.isEmpty { client?.urlProtocol(self, didLoad: reply.body) }
-        if reply.closes { client?.urlProtocolDidFinishLoading(self) }
+        guard !reply.later.isEmpty else {
+            if reply.closes { client?.urlProtocolDidFinishLoading(self) }
+            return
+        }
+        let loader = Unchecked(value: self)
+        Task {
+            for piece in reply.later {
+                try? await Task.sleep(for: reply.interval)
+                loader.value.client?.urlProtocol(loader.value, didLoad: piece)
+            }
+            if reply.closes { loader.value.client?.urlProtocolDidFinishLoading(loader.value) }
+        }
     }
 
     override func stopLoading() {}
