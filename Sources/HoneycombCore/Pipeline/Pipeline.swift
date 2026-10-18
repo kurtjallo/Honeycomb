@@ -110,8 +110,9 @@ public actor Pipeline {
 
     static func runsOnThisMac(_ provider: ProviderRecord) -> Bool {
         if provider.kind == .builtin { return true }
-        guard let host = provider.baseUrl.flatMap(URL.init(string:))?.host(percentEncoded: false) else { return false }
-        if host == "localhost" || host == "::1" { return true }
+        guard var host = provider.baseUrl.flatMap(URL.init(string:))?.host(percentEncoded: false)?.lowercased() else { return false }
+        if host.hasSuffix(".") { host.removeLast() }
+        if ["localhost", "::1", "0.0.0.0"].contains(host) { return true }
         let octets = host.split(separator: ".")
         return octets.count == 4 && octets.first == "127" && octets.allSatisfy { UInt8($0) != nil }
     }
