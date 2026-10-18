@@ -18,4 +18,17 @@ public enum CallAppCatalog {
         CallApp(bundleId: "com.brave.Browser", name: "Brave", kind: .browser),
         CallApp(bundleId: "org.mozilla.firefox", name: "Firefox", kind: .browser),
     ]
+
+    /// Safari records from WebKit's shared GPU process, which carries no Safari bundle ID.
+    static let aliases = [
+        "com.apple.avconferenced": "com.apple.FaceTime",
+        "com.apple.WebKit.GPU": "com.apple.Safari",
+    ]
+
+    /// Whether a recording process belongs to an app. Browsers and some apps record from helper
+    /// processes, such as "com.google.Chrome.helper".
+    public static func process(_ bundleID: String, belongsTo appBundleID: String) -> Bool {
+        let resolved = aliases[bundleID] ?? bundleID
+        return resolved == appBundleID || resolved.hasPrefix(appBundleID + ".")
+    }
 }

@@ -104,16 +104,8 @@ public struct DetectionMachine: Sendable {
         self.accessibilityTrusted = accessibilityTrusted
     }
 
-    /// Browsers and some apps record from helper processes, such as "com.google.Chrome.helper".
-    /// Safari records from WebKit's shared GPU process, which carries no Safari bundle ID.
-    static let aliases = [
-        "com.apple.avconferenced": "com.apple.FaceTime",
-        "com.apple.WebKit.GPU": "com.apple.Safari",
-    ]
-
     public func callApp(for bundleID: String) -> CallApp? {
-        let resolved = Self.aliases[bundleID] ?? bundleID
-        return callApps.first { resolved == $0.bundleId || resolved.hasPrefix($0.bundleId + ".") }
+        callApps.first { CallAppCatalog.process(bundleID, belongsTo: $0.bundleId) }
     }
 
     public mutating func handle(_ event: DetectionEvent) -> [DetectionCommand] {

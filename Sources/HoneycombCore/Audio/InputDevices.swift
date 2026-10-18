@@ -49,14 +49,11 @@ public enum InputDevicePicker {
         return fallback
     }
 
-    /// The input devices to follow, call apps first.
+    /// The input devices call apps record from. Other recorders, such as OBS on a virtual device
+    /// or Siri listening, never choose the mic.
     public static func inputsToFollow(_ uses: [InputUse], callApps: Set<String>) -> [AudioDeviceID] {
-        var preferred: [AudioDeviceID] = []
-        var others: [AudioDeviceID] = []
-        for use in uses {
-            if callApps.contains(where: { use.bundleID.hasPrefix($0) }) { preferred += use.devices } else { others += use.devices }
-        }
-        return preferred + others
+        uses.filter { use in callApps.contains { CallAppCatalog.process(use.bundleID, belongsTo: $0) } }
+            .flatMap(\.devices)
     }
 }
 
@@ -84,7 +81,7 @@ public enum InputDevices {
         CA.defaultDevice(kAudioHardwarePropertyDefaultInputDevice)
     }
 
-    /// Input devices used by other processes that are recording right now, call apps first.
+    /// Input devices that call apps are recording from right now.
     public static func inputsInUse(preferring bundleIDs: Set<String>) -> [AudioDeviceID] {
         InputDevicePicker.inputsToFollow(uses(), callApps: bundleIDs)
     }
