@@ -39,7 +39,8 @@ Or download the DMG from [Releases](https://github.com/kurtjallo/Honeycomb/relea
 1. A call app starts using the mic, and Honeycomb asks whether to take notes.
 2. It records your mic and the call audio as two tracks.
 3. NVIDIA Parakeet transcribes both on your Mac as you talk.
-4. When the call ends, a local AI model writes the notes.
+4. When the call ends, Cohere Transcribe can redo the transcript for higher accuracy. It is an optional download.
+5. A local AI model writes the notes.
 
 Audio never leaves your Mac. Text leaves only if you connect a cloud model.
 
@@ -55,4 +56,4 @@ cd Honeycomb
 
 ## License
 
-[MIT](LICENSE). Speech by [NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) through [FluidAudio](https://github.com/FluidInference/FluidAudio). Local AI by [MLX](https://github.com/ml-explore/mlx-swift-lm) and [Qwen](https://huggingface.co/Qwen/Qwen3.5-4B).
+[MIT](LICENSE). Speech by [NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) through [FluidAudio](https://github.com/FluidInference/FluidAudio), and by [Cohere Transcribe](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026). Local AI by [MLX](https://github.com/ml-explore/mlx-swift-lm) and [Qwen](https://huggingface.co/Qwen/Qwen3.5-4B).
