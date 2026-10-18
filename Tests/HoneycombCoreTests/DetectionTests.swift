@@ -110,6 +110,15 @@ struct DetectionTests {
         #expect(ticks(20_000, 25_000) == [.callEnded], "the call can end again")
     }
 
+    @Test mutating func aPromptStartThatFailedNeverAutoStopsALaterRecording() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "us.zoom.xos", atMs: 0))
+        _ = ticks(0, 3_000)
+        _ = machine.handle(.startNotes(key: "1"))
+        _ = machine.handle(.recordingStarted(key: nil))
+        _ = machine.handle(.micStopped(key: "1", atMs: 60_000))
+        #expect(!ticks(60_000, 70_000).contains(.callEnded))
+    }
+
     @Test mutating func manualRecordingNeverAutoStops() {
         _ = machine.handle(.recordingStarted(key: nil))
         _ = machine.handle(.micStarted(key: "1", bundleID: "us.zoom.xos", atMs: 0))
