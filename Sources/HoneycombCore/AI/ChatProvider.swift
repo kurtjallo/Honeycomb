@@ -75,6 +75,8 @@ public enum ProviderError: Error, Equatable, Sendable {
     /// A base URL with no host, such as `localhost:11434` without `http://`.
     case invalidURL
     case timedOut
+    /// The API key is stored but can't be read: the keychain is locked, or access was denied.
+    case keychainUnavailable
 
     public var code: String {
         switch self {
@@ -93,6 +95,7 @@ public enum ProviderError: Error, Equatable, Sendable {
         case .insecureURL: "insecure_url"
         case .invalidURL: "invalid_url"
         case .timedOut: "timed_out"
+        case .keychainUnavailable: "keychain_unavailable"
         }
     }
 
@@ -100,7 +103,7 @@ public enum ProviderError: Error, Equatable, Sendable {
     public init?(code: String) {
         let all: [ProviderError] = [.unreachable, .unauthorized, .modelNotFound, .contextTooLong, .rateLimited(retryAfter: nil),
                                     .outOfCredit, .badRequest, .server(status: 500), .truncated, .refused, .cancelled, .invalidResponse,
-                                    .insecureURL, .invalidURL, .timedOut]
+                                    .insecureURL, .invalidURL, .timedOut, .keychainUnavailable]
         guard let match = all.first(where: { $0.code == code }) else { return nil }
         self = match
     }
@@ -123,6 +126,7 @@ public enum ProviderError: Error, Equatable, Sendable {
         case .insecureURL: "Use an https address. Plain http only works for this Mac and your local network."
         case .invalidURL: "Enter the full address, such as http://localhost:11434 or https://api.openai.com/v1."
         case .timedOut: "The provider took too long to answer. Check that the server is running, then try again."
+        case .keychainUnavailable: "Honeycomb couldn't read the API key because the keychain is locked or access was denied. Unlock your Mac, choose Allow when macOS asks about the key, then try again."
         }
     }
 
