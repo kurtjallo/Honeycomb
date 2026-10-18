@@ -309,6 +309,13 @@ struct NoteWriterTests {
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
     }
 
+    @Test func aFailedVersionKeepsEveryWordThatArrived() async throws {
+        await #expect(throws: ProviderError.unreachable) {
+            _ = try await writer(FakeChat(chunks: ["# T\n\n## Summary\n", "- a", "x"], failAfter: 2)).write(meeting.id)
+        }
+        #expect(try database.enhancedNotes(meeting.id).first?.markdown == "## Summary\n- a")
+    }
+
     @Test func cloudNeedsConsentOnce() async throws {
         let outcome = try await writer(FakeChat(chunks: ["# T"]), local: false).write(meeting.id)
         #expect(outcome == .waiting(.cloudConsent))
