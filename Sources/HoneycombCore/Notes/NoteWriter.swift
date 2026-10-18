@@ -56,7 +56,6 @@ public struct NoteWriter: Sendable {
         // yet leaves nothing behind.
         var lastWrite: ContinuousClock.Instant?
         let finish: FinishReason
-        let output: (title: String?, body: String)
         do {
             let request = ChatRequest(model: resolved.model, messages: messages, maxTokens: NotesPrompt.outputTokens)
             finish = try await read(request, from: resolved.provider, for: meetingID) { piece in
@@ -67,10 +66,16 @@ public struct NoteWriter: Sendable {
                 try database.saveEnhanced(note)
                 lastWrite = .now
             }
-            output = NotesPrompt.parseOutput(raw, sections: input.template.sections)
+            let output = NotesPrompt.parseOutput(raw, sections: input.template.sections)
             // A reasoning model can spend its whole budget thinking. An answer with no notes must
             // never replace the notes the meeting already has.
             if output.body.isEmpty { throw ProviderError.truncated }
+            let doc = Authorship.apply(to: Markdown.document(output.body), userNotes: input.userNotes)
+            note.doc = doc.encoded()
+            note.markdown = output.body
+            note.status = .done
+            note.errorCode = finish == .length ? ProviderError.truncated.code : nil
+            try database.finishEnhanced(note, suggestedTitle: output.title)
         } catch {
             let cancelled = error is CancellationError || error as? ProviderError == .cancelled
             if lastWrite != nil {
@@ -80,13 +85,6 @@ public struct NoteWriter: Sendable {
             }
             throw cancelled ? CancellationError() : error
         }
-
-        let doc = Authorship.apply(to: Markdown.document(output.body), userNotes: input.userNotes)
-        note.doc = doc.encoded()
-        note.markdown = output.body
-        note.status = .done
-        note.errorCode = finish == .length ? ProviderError.truncated.code : nil
-        try database.finishEnhanced(note, suggestedTitle: output.title)
         Log.info("notes.finished", ["meeting": .id(meetingID), "truncated": .bool(finish == .length)])
         return .written(note.id)
     }
