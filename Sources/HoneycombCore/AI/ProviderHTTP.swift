@@ -17,16 +17,24 @@ public enum ProviderURLPolicy {
         if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
         if host.hasSuffix(".") { host.removeLast() }
         if host == "localhost" || host.hasSuffix(".local") { return true }
-        if let bytes = address(host, family: AF_INET, size: 4) {
-            switch (bytes[0], bytes[1]) {
-            case (127, _), (10, _), (172, 16...31), (192, 168), (169, 254): return true
-            default: return false
-            }
-        }
-        if let bytes = address(host, family: AF_INET6, size: 16) {
-            return bytes == [UInt8](repeating: 0, count: 15) + [1] || bytes[0] & 0xFE == 0xFC
+        if let bytes = address(host, family: AF_INET, size: 4) { return isPrivate(ipv4: bytes) }
+        // A link-local address names its interface after a `%`, which inet_pton doesn't read.
+        let unscoped = String(host.prefix { $0 != "%" })
+        if let bytes = address(unscoped, family: AF_INET6, size: 16) {
+            if bytes[..<10].allSatisfy({ $0 == 0 }), bytes[10] == 0xFF, bytes[11] == 0xFF { return isPrivate(ipv4: Array(bytes[12...])) }
+            return bytes == [UInt8](repeating: 0, count: 15) + [1]
+                || bytes[0] & 0xFE == 0xFC
+                || (bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80)
         }
         return false
+    }
+
+    /// 0.0.0.0 reaches this Mac, as servers that listen on every interface print it.
+    private static func isPrivate(ipv4 bytes: [UInt8]) -> Bool {
+        switch (bytes[0], bytes[1]) {
+        case (127, _), (10, _), (172, 16...31), (192, 168), (169, 254): true
+        default: bytes == [0, 0, 0, 0]
+        }
     }
 
     private static func address(_ host: String, family: Int32, size: Int) -> [UInt8]? {
