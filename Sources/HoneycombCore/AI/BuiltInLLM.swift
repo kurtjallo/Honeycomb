@@ -87,7 +87,7 @@ public actor LocalLLM<Runtime: LLMRuntime> {
     func done(_ id: String) async {
         users = max(0, users - 1)
         await host.endUse(.llm(id))
-        if await host.isRecording { runtime.clearCache() }
+        if host.isRecording { runtime.clearCache() }
         scheduleIdleUnload()
     }
 
@@ -133,7 +133,7 @@ public actor LocalLLM<Runtime: LLMRuntime> {
         defer { loading = nil }
         let model = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
         loaded = (id, model)
-        runtime.limitCache(recording: await host.isRecording)
+        runtime.limitCache(recording: host.isRecording)
         return model
     }
 

@@ -38,10 +38,12 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button(model.isRecording ? "Stop Recording" : "Start Recording") {
-                Task { await model.toggleRecording() }
+            Button(model.isStartingRecording ? "Starting…" : model.isStoppingRecording ? "Stopping…"
+                   : model.isRecording ? "Stop Recording" : "Start Recording") {
+                model.toggleRecording()
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
+            .disabled(model.isStartingRecording || model.isStoppingRecording)
         }
     }
 }
