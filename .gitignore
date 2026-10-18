@@ -16,7 +16,7 @@ editor/dist/
 *.m4a
 *.wav
 !**/Fixtures/*.caf
-Models/
+/Models/
 *.p12
 *.cer
 *.certSigningRequest
