@@ -170,7 +170,8 @@ public struct DetectionMachine: Sendable {
 
         case .startNotes(let key):
             guard var activation = activations[key], activation.phase == .prompted else { return [] }
-            activation.phase = .recording
+            // The call counts as recorded only once capture starts, in `.recordingStarted(key)`.
+            activation.phase = .quiet
             activations[key] = activation
             return [.hide(key: key), .startRecording(prompt(key, activation))]
 
