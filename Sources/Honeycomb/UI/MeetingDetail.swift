@@ -6,7 +6,7 @@ struct MeetingDetail: View {
     @Environment(AppModel.self) private var model
     let meeting: Meeting
     @State private var title = ""
-    @State private var tab = NotesTab.ai
+    @State private var tab = NotesTab.mine
     @State private var versions: [EnhancedNote] = []
     @State private var pinned: UUID?
 
@@ -125,15 +125,12 @@ struct MeetingDetail: View {
         .onChange(of: meeting.title) { old, new in if title == old { title = new } }
         .onDisappear { model.rename(meeting, to: title) }
         .onChange(of: generating?.id) { pinned = nil }
+        // Switching while the user types in My notes would send their next keystrokes into the AI notes.
+        .onChange(of: hasAINotes) { tab = hasAINotes && !EditorHost.shared.isFocused ? .ai : .mine }
         .task(id: meeting.id) {
             guard let database = model.database else { return }
-            var opening = true
             do {
-                for try await versions in database.enhancedUpdates(meeting.id) {
-                    if self.versions.isEmpty, !versions.isEmpty { tab = opening || !EditorHost.shared.isFocused ? .ai : .mine }
-                    opening = false
-                    self.versions = versions
-                }
+                for try await versions in database.enhancedUpdates(meeting.id) { self.versions = versions }
             } catch {}
         }
     }
@@ -146,8 +143,12 @@ struct NotesEditor: View {
     let tab: MeetingDetail.NotesTab
     let current: EnhancedNote?
 
+    /// My notes never depend on the AI version, so nothing about it reloads them under the user.
     private var key: String {
-        "\(meeting.id)-\(tab)-\(current?.id.uuidString ?? "none")-\(current?.status.rawValue ?? "")"
+        switch tab {
+        case .mine: "\(meeting.id)-mine"
+        case .ai: "\(meeting.id)-ai-\(current?.id.uuidString ?? "none")-\(current?.status.rawValue ?? "")"
+        }
     }
 
     var body: some View {
