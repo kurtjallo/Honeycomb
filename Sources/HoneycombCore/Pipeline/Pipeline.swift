@@ -128,6 +128,12 @@ public actor Pipeline {
                 }
                 Log.info("pipeline.recovered_meeting", ["meeting": .id(meeting.id)])
             }
+            // A crash between saving a stopped meeting and queueing its first job strands it here.
+            for meeting in try database.meetings(in: [.transcribing])
+            where try !database.jobs(for: meeting.id).contains(where: { [.queued, .running].contains($0.status) }) {
+                try database.enqueue(.finalizeAudio, meeting: meeting.id)
+                Log.info("pipeline.recovered_meeting", ["meeting": .id(meeting.id)])
+            }
         } catch {
             Log.error("pipeline.recovery_failed")
         }
