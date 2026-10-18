@@ -34,6 +34,8 @@ final class AppModel {
     private var recorder: MeetingRecorder?
     private var modelTask: Task<Void, Never>?
     private var detector: CallDetector?
+    /// Counts route changes, so a finished 9B download can tell whether the user chose since it began.
+    private var routeChanges = 0
     /// Seconds left before an automatic stop, while the user can still keep recording.
     private(set) var autoStopCountdown: Int?
     private let launchedAt = ContinuousClock.now
@@ -145,6 +147,7 @@ final class AppModel {
     private func setRoutes(_ tasks: [AITask], provider: String, model: String) {
         guard let database else { return }
         for task in tasks { try? database.saveRoute(Route(task: task, providerId: provider, model: model)) }
+        routeChanges += 1
         reloadAISetup()
         installRoutedModels()
         // Meetings waiting on consent were waiting for the old notes provider. A re-run asks again
@@ -202,17 +205,19 @@ final class AppModel {
         }
     }
 
-    /// The optional 9B. When it is ready, notes on the built-in model move to it. Chat stays on
-    /// the 4B, the only model allowed to load during a recording.
+    /// The optional 9B. When it is ready, notes on the built-in model move to it, unless the user
+    /// picked a route while it downloaded. Chat stays on the 4B, the only model allowed to load
+    /// during a recording.
     func downloadLargeModel() {
         guard let store else { return }
+        let changesAtStart = routeChanges
         Task {
             do {
                 try await store.install(ModelCatalog.largeLLM)
             } catch {
                 return
             }
-            if routes[.enhance]?.providerId == ProviderRecord.builtIn.id {
+            if routeChanges == changesAtStart, routes[.enhance]?.providerId == ProviderRecord.builtIn.id {
                 setRoute(.enhance, provider: ProviderRecord.builtIn.id, model: ModelCatalog.largeLLM)
             }
         }
