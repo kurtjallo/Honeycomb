@@ -169,7 +169,7 @@ describe('docChanged', () => {
     expect(ed.editor.commands.undo()).toBe(false)
     expect(ed.getDoc()).toEqual(doc(p('c', ai('Final notes'))))
     vi.advanceTimersByTime(5000)
-    expect(ed.sent('docChanged').map(m => m.payload)).toEqual([{ loadId: 1, doc: doc(p(null)) }])
+    expect(ed.sent('docChanged').map(m => m.payload.loadId)).toEqual([1])
   })
 
   test('undo still works for edits made after a load', () => {

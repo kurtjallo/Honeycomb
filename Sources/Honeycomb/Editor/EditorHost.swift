@@ -15,8 +15,13 @@ final class EditorHost: NSObject {
     let webView: WKWebView
     private(set) var isReady = false
     private var pending: [(String, [String: Any])] = []
-    private var lastLoad: [String: Any]?
-    private var onDocChanged: ((PMNode) -> Void)?
+    /// The latest of each message that sets what the page shows, sent again to a new page.
+    private var shown: [String: [String: Any]] = [:]
+    private static let replayed = ["load"]
+    private var loadID = 0
+    /// Save closures by load ID. The page tags every edit with the ID of the load it was made in,
+    /// so an edit that arrives after the next note loaded still saves to its own note.
+    private var saves: [Int: (PMNode) -> Void] = [:]
     private var onSourceClicked: ((String, CGRect) -> Void)?
 
     override init() {
@@ -44,11 +49,11 @@ final class EditorHost: NSObject {
     /// Shows a document. `onChange` gets the user's edits, debounced by the page.
     func load(_ doc: PMNode?, editable: Bool, placeholder: String, onChange: ((PMNode) -> Void)?,
               onSource: ((String, CGRect) -> Void)? = nil) {
-        onDocChanged = onChange
+        loadID += 1
+        saves[loadID] = onChange
         onSourceClicked = onSource
-        var payload: [String: Any] = ["mode": editable ? "edit" : "readonly", "placeholder": placeholder]
+        var payload: [String: Any] = ["loadId": loadID, "mode": editable ? "edit" : "readonly", "placeholder": placeholder]
         payload["doc"] = doc.flatMap(Self.object) ?? NSNull()
-        lastLoad = payload
         send("load", payload)
     }
 
@@ -59,7 +64,8 @@ final class EditorHost: NSObject {
 
     func streamDone(_ doc: PMNode) {
         let object = Self.object(doc) ?? NSNull()
-        lastLoad = ["mode": "edit", "doc": object]
+        shown["load"]?["mode"] = "edit"
+        shown["load"]?["doc"] = object
         send("streamDone", ["doc": object])
     }
 
@@ -75,17 +81,41 @@ final class EditorHost: NSObject {
         send("focus", [:])
     }
 
+    /// Saves an edit the page has not reported yet. Call before quitting.
+    func flush() async {
+        guard isReady else { return }
+        _ = try? await webView.callAsyncJavaScript(Self.receive, arguments: ["envelope": Self.envelope("flush", [:])],
+                                                   contentWorld: .page)
+    }
+
+    private static let receive = "return window.honeycomb.receive(envelope)"
+
+    private static func envelope(_ type: String, _ payload: [String: Any]) -> [String: Any] {
+        ["v": 1, "type": type, "payload": payload]
+    }
+
     private func send(_ type: String, _ payload: [String: Any]) {
+        if Self.replayed.contains(type) { shown[type] = payload }
         guard isReady else {
             pending.removeAll { $0.0 == type }
             pending.append((type, payload))
             return
         }
-        let envelope: [String: Any] = ["v": 1, "type": type, "payload": payload]
-        webView.callAsyncJavaScript("return window.honeycomb.receive(envelope)", arguments: ["envelope": envelope],
-                                    in: nil, in: .page) { result in
-            if case .failure = result { Log.error("editor.message_failed") }
+        webView.callAsyncJavaScript(Self.receive, arguments: ["envelope": Self.envelope(type, payload)],
+                                    in: nil, in: .page) { [weak self] result in
+            guard case .success(let reply) = result else { return Log.error("editor.message_failed") }
+            let ok = (reply as? [String: Any])?["ok"] as? Bool == true
+            if type == "load", let id = payload["loadId"] as? Int {
+                self?.loadReplied(id, ok: ok)
+            } else if !ok {
+                Log.error("editor.message_rejected")
+            }
         }
+    }
+
+    /// Once the page shows a load, it reports no more edits for older ones, so their closures go.
+    private func loadReplied(_ id: Int, ok: Bool) {
+        if ok { saves = saves.filter { $0.key >= id } }
     }
 
     static func object(_ doc: PMNode) -> Any? {
@@ -118,14 +148,14 @@ extension EditorHost: WKScriptMessageHandlerWithReply {
                 return
             }
             isReady = true
-            let queued = pending
+            let queued = pending.filter { !Self.replayed.contains($0.0) }
             pending = []
-            if !queued.contains(where: { $0.0 == "load" }), let lastLoad { send("load", lastLoad) }
+            for type in Self.replayed { if let payload = shown[type] { send(type, payload) } }
             for (type, payload) in queued { send(type, payload) }
         case "docChanged":
-            if let doc = Self.node(payload["doc"]) {
-                lastLoad?["doc"] = payload["doc"]
-                onDocChanged?(doc)
+            if let id = payload["loadId"] as? Int, let doc = Self.node(payload["doc"]) {
+                if id == loadID { shown["load"]?["doc"] = payload["doc"] }
+                saves[id]?(doc)
             }
         case "linkClicked":
             if let href = payload["href"] as? String, Markdown.isSafeLink(href), let url = URL(string: href) {
@@ -151,10 +181,9 @@ extension EditorHost: WKNavigationDelegate {
         return .cancel
     }
 
-    /// If the web process dies, reload and show the last saved document again.
+    /// If the web process dies, reload and show the last document again.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         Log.error("editor.process_terminated")
-        if let lastLoad { pending = [("load", lastLoad)] }
         reload()
     }
 }
