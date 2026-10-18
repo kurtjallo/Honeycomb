@@ -45,7 +45,7 @@ export function extensions(placeholder: () => string): Extensions {
     TaskList,
     TaskItem.configure({ nested: true }),
     SafeLink,
-    Placeholder.configure({ placeholder }),
+    Placeholder.configure({ placeholder, showOnlyWhenEditable: false }),
     Ai,
     BlockIds,
     Sources,
