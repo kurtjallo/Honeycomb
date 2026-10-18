@@ -223,6 +223,37 @@ struct NoteWriterTests {
         #expect(try database.meeting(meeting.id)?.title == "Acme QBR")
     }
 
+    @Test func renamingWhileNotesFinishKeepsBoth() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pool = try AppDatabase.open(at: dir.appendingPathComponent("db.sqlite"), backups: dir)
+        for _ in 0..<50 {
+            let meeting = Meeting(title: "Zoom call", state: .writingNotes)
+            try pool.insert(meeting)
+            var note = EnhancedNote(meetingId: meeting.id, templateId: "general", providerId: "builtin", model: "m")
+            note.status = .done
+            let finished = note
+            async let notes: Void = Task.detached { try pool.finishEnhanced(finished, suggestedTitle: "AI title") }.value
+            async let rename: Void = Task.detached { try pool.renameMeeting(meeting.id, to: "Acme QBR") }.value
+            _ = try await (notes, rename)
+            let saved = try #require(try pool.meeting(meeting.id))
+            #expect(saved.currentEnhancedId == note.id)
+            #expect(saved.title == "Acme QBR")
+            #expect(saved.titleSource == .user)
+        }
+    }
+
+    @Test func stoppingKeepsAnEndAndLengthAlreadyStored() throws {
+        let end = Date(timeIntervalSince1970: 1_000)
+        try database.recordingStopped(meeting.id, endAt: end, durationMs: 60_000)
+        try database.recordingStopped(meeting.id, endAt: Date(), durationMs: 1)
+        let saved = try #require(try database.meeting(meeting.id))
+        #expect(saved.state == .transcribing)
+        #expect(saved.durationMs == 2_700_000)
+        #expect(saved.endAt == end)
+    }
+
     @Test func aFirstLineThatIsASectionIsNotTheTitle() async throws {
         _ = try await writer(FakeChat(chunks: ["# Summary\n\n- Acme renews if SSO ships by Q1"])).write(meeting.id)
         #expect(try database.meeting(meeting.id)?.title == meeting.title)

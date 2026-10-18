@@ -175,12 +175,7 @@ public actor MeetingRecorder {
         let meta = await session.stop()
         if liveMeeting == id { await live?.value }
         liveMeeting = nil
-        if var meeting = try? database.meeting(id) {
-            meeting.state = .transcribing
-            meeting.endAt = Date()
-            meeting.durationMs = meta.durationMs
-            try? database.save(meeting)
-        }
+        try? database.recordingStopped(id, endAt: Date(), durationMs: meta.durationMs)
         phase = .idle
         return id
     }

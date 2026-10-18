@@ -388,9 +388,7 @@ final class AppModel {
     }
 
     func regenerate(_ meeting: Meeting, template: String) {
-        guard let database, var updated = try? database.meeting(meeting.id) else { return }
-        updated.templateId = template
-        try? database.save(updated)
+        try? database?.setTemplate(meeting.id, template)
         Task { await pipeline?.enqueue(.enhance, meeting: meeting.id) }
     }
 
@@ -459,10 +457,8 @@ final class AppModel {
 
     func rename(_ meeting: Meeting, to title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard var updated = try? database?.meeting(meeting.id), !trimmed.isEmpty, trimmed != updated.title else { return }
-        updated.title = trimmed
-        updated.titleSource = .user
-        try? database?.save(updated)
+        guard let current = try? database?.meeting(meeting.id), !trimmed.isEmpty, trimmed != current.title else { return }
+        try? database?.renameMeeting(meeting.id, to: trimmed)
     }
 
     func newNote() {

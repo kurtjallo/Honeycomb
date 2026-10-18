@@ -258,12 +258,7 @@ public actor Pipeline {
             }
         }
         try database.replaceGaps(gaps, meeting: id)
-        if var meeting = try database.meeting(id) {
-            meeting.state = .transcribing
-            meeting.durationMs = meeting.durationMs ?? meta.durationMs
-            meeting.endAt = meeting.endAt ?? meta.endedAt
-            try database.save(meeting)
-        }
+        try database.recordingStopped(id, endAt: meta.endedAt, durationMs: meta.durationMs)
     }
 
     private func transcribeFinal(_ id: UUID) async throws {
