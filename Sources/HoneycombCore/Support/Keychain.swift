@@ -4,7 +4,9 @@ import Security
 /// Where provider API keys are kept. Tests use an in-memory fake, so they never touch the login keychain.
 public protocol SecretStore: Sendable {
     func set(_ secret: String, account: String) throws
-    func get(account: String) -> String?
+    /// Nil only when no key is stored. A keychain that can't be read throws, so a request never
+    /// goes out without its key and comes back as "key rejected".
+    func read(account: String) throws -> String?
     func delete(account: String)
 }
 
@@ -33,18 +35,26 @@ public struct Keychain: SecretStore {
         guard status == errSecSuccess else { throw KeychainError.status(status) }
     }
 
-    public func get(account: String) -> String? {
+    public func read(account: String) throws -> String? {
         var query = baseQuery(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        return Self.secret(status: status, result: result)
+        return try Self.secret(status: status, result: result)
     }
 
-    static func secret(status: OSStatus, result: AnyObject?) -> String? {
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+    /// Only `KeychainTests` still reads keys this way. Use `read(account:)`, which reports failures.
+    public func get(account: String) -> String? {
+        (try? read(account: account)) ?? nil
+    }
+
+    static func secret(status: OSStatus, result: AnyObject?) throws -> String? {
+        switch status {
+        case errSecSuccess: (result as? Data).flatMap { String(data: $0, encoding: .utf8) }
+        case errSecItemNotFound: nil
+        default: throw KeychainError.status(status)
+        }
     }
 
     public func delete(account: String) {

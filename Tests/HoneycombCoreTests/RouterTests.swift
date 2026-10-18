@@ -75,16 +75,28 @@ struct RouterTests {
         #expect(try Keychain.secret(status: errSecItemNotFound, result: nil) == nil)
     }
 
+    @Test("a provider whose key can't be read fails with the Keychain error instead of sending no key", arguments: [
+        ProviderKind.openAICompatible, .anthropic,
+    ])
+    func unreadableKeyStopsTheRequest(kind: ProviderKind) throws {
+        let saved = try router.save(ProviderDraft(name: "Cloud", kind: kind, baseURL: "https://api.example.com",
+                                                  apiKey: "sk-1", contextTokens: 128_000))
+        try database.saveRoute(Route(task: .enhance, providerId: saved.id, model: "x"))
+        keychain.readError.withLock { $0 = Keychain.KeychainError.status(errSecInteractionNotAllowed) }
+
+        #expect(throws: Keychain.KeychainError.status(errSecInteractionNotAllowed)) { try router.resolve(.enhance) }
+    }
+
     @Test func keysLiveInKeychainAndLeaveWithTheProvider() throws {
         let saved = try router.save(ProviderDraft(name: "OpenRouter", kind: .openAICompatible, baseURL: "https://openrouter.ai/api/v1",
                                                   apiKey: " sk-or-1 ", contextTokens: 128_000))
         let keyRef = try #require(saved.keyRef)
-        #expect(keychain.get(account: keyRef) == "sk-or-1")
+        #expect(try keychain.read(account: keyRef) == "sk-or-1")
         #expect(try database.provider(saved.id)?.keyRef == keyRef)
         try database.saveRoute(Route(task: .enhance, providerId: saved.id, model: "x"))
 
         try router.delete(saved)
-        #expect(keychain.get(account: keyRef) == nil)
+        #expect(try keychain.read(account: keyRef) == nil)
         #expect(try database.provider(saved.id) == nil)
         #expect(try database.route(.enhance) == nil)
     }
@@ -238,6 +250,8 @@ struct RouterTests {
 
 final class MemorySecretStore: SecretStore {
     private let secrets = Mutex<[String: String]>([:])
+    /// Set to make every read fail, like a locked keychain.
+    let readError = Mutex<(any Error)?>(nil)
 
     var accounts: [String] { secrets.withLock { Array($0.keys) } }
 
@@ -245,8 +259,9 @@ final class MemorySecretStore: SecretStore {
         secrets.withLock { $0[account] = secret }
     }
 
-    func get(account: String) -> String? {
-        secrets.withLock { $0[account] }
+    func read(account: String) throws -> String? {
+        if let error = readError.withLock({ $0 }) { throw error }
+        return secrets.withLock { $0[account] }
     }
 
     func delete(account: String) {
