@@ -68,6 +68,8 @@ public struct NoteWriter: Sendable {
             }
             let output = NotesPrompt.parseOutput(raw, sections: input.template.sections)
             if output.body.isEmpty { throw ProviderError.truncated }
+            // Notes open with a heading, so an answer cut off before its first one was still reasoning.
+            if finish == .length, output.title == nil, !output.body.hasPrefix("#") { throw ProviderError.truncated }
             let doc = Authorship.apply(to: Markdown.document(output.body), userNotes: input.userNotes)
             note.doc = doc.encoded()
             note.markdown = output.body
