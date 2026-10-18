@@ -144,9 +144,17 @@ struct DictionaryCorrectorTests {
         #expect(DictionaryCorrector.correct("open Honeycom now", terms: ["Honeycomb"]) == "open Honeycomb now")
     }
 
+    @Test("fixes a short name one sound off when it is capitalized mid-sentence", arguments: [
+        ("John", "Jon"), ("Jon", "John"), ("Shawn", "Sean"), ("Anna", "Ana"), ("Matt", "Mat"), ("Zoe", "Zoey"),
+    ])
+    func fixesShortNamesMidSentence(heard: String, term: String) {
+        #expect(DictionaryCorrector.correct("I spoke with \(heard) today.", terms: [term]) == "I spoke with \(term) today.")
+    }
+
     @Test func leavesCommonWordsThatSoundLikeShortNamesAlone() {
         let text = "It has been a long time, same as when we join calls."
         #expect(DictionaryCorrector.correct(text, terms: ["Ben", "Tim", "Sam", "Jon"]) == text)
+        #expect(DictionaryCorrector.correct("Time is up. Been there.", terms: ["Tim", "Ben"]) == "Time is up. Been there.")
     }
 
     @Test func leavesOtherWordsAlone() {
