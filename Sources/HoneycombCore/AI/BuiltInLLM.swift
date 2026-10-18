@@ -104,22 +104,34 @@ public actor LocalLLM<Runtime: LLMRuntime> {
 
     /// A model being replaced stays loaded until ModelHost evicts it, which waits for its last lease
     /// and then calls `forceUnload`. Callers that arrive meanwhile join the same load task.
+    ///
+    /// Making room can wait minutes for the old model's last user, and a load takes seconds. The caller
+    /// may be cancelled, or a recording may start, in either wait, so both are checked again before
+    /// and after the load. A cancelled caller cancels the load it started.
     private func model(_ id: String) async throws -> Runtime.Model {
         if let loaded, loaded.id == id { return loaded.model }
         if let loading, loading.id == id { return try await loading.task.value }
         let task = Task { [store, host, runtime] in
             guard let folder = await store.folder(id) else { throw ModelHostError.modelMissing(id) }
             try await host.register(.llm(id)) { [weak self] in await self?.forceUnload() }
+            let stillWanted = {
+                try Task.checkCancellation()
+                guard await host.canLoad(.llm(id)) else { throw ModelHostError.notAllowedNow }
+            }
             do {
-                return try await runtime.load(from: folder)
+                try await stillWanted()
+                let model = try await runtime.load(from: folder)
+                try await stillWanted()
+                return model
             } catch {
+                runtime.clearCache()
                 await host.unregister(.llm(id))
                 throw error
             }
         }
         loading = (id, task)
         defer { loading = nil }
-        let model = try await task.value
+        let model = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
         loaded = (id, model)
         runtime.limitCache(recording: await host.isRecording)
         return model
@@ -169,6 +181,8 @@ public struct BuiltInProvider: ChatProvider {
                         }
                     }
                     let input = try await container.prepare(input: UserInput(chat: chat, additionalContext: ["enable_thinking": false]))
+                    // MLX reads the whole prompt before its first token and can't be stopped partway.
+                    try Task.checkCancellation()
                     let parameters = GenerateParameters(maxTokens: request.maxTokens, temperature: Float(request.temperature),
                                                         topP: 0.8, topK: 20, prefillStepSize: 512)
                     var reason = FinishReason.stop
