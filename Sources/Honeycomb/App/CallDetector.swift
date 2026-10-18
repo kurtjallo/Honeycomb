@@ -66,8 +66,12 @@ final class CallDetector {
         for command in commands {
             switch command {
             case .readTitle(let key, let bundleID):
-                let titles = BrowserTitles.windowTitles(bundleID: bundleID)
-                run(machine.handle(.titleRead(key: key, titles: titles)))
+                // Each Accessibility call waits on the browser's main thread, about 1.5 s per window when it is busy.
+                Task { [weak self] in
+                    let titles = await Task.detached { BrowserTitles.windowTitles(bundleID: bundleID) }.value
+                    guard let self else { return }
+                    self.run(self.machine.handle(.titleRead(key: key, titles: titles)))
+                }
             case .show(let prompt):
                 prompts.show(prompt) { [weak self] start in
                     guard let self else { return }

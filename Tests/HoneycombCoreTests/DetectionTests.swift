@@ -68,6 +68,21 @@ struct DetectionTests {
         #expect(prompts.map(\.kind) == [.site("Google Meet")])
     }
 
+    @Test mutating func aSlowTitleReadIsNotSentTwice() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
+        #expect(ticks(0, 3_000).count == 1)
+        #expect(ticks(3_500, 20_000).isEmpty)
+        let prompts = shown(machine.handle(.titleRead(key: "1", titles: ["Meet - abc-defg-hij"])))
+        #expect(prompts.map(\.kind) == [.site("Google Meet")])
+    }
+
+    @Test mutating func aTitleThatArrivesAfterTheMicStoppedIsIgnored() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
+        _ = ticks(0, 3_000)
+        _ = machine.handle(.micStopped(key: "1", atMs: 3_200))
+        #expect(machine.handle(.titleRead(key: "1", titles: ["Meet - abc-defg-hij"])).isEmpty)
+    }
+
     @Test mutating func safariRecordsFromWebKitsGPUProcess() {
         _ = machine.handle(.micStarted(key: "1", bundleID: "com.apple.WebKit.GPU", atMs: 0))
         #expect(ticks(0, 3_000) == [.readTitle(key: "1", bundleID: "com.apple.Safari")])
