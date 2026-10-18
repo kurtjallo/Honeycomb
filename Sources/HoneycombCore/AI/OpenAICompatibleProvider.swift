@@ -62,14 +62,22 @@ private struct ChatBody: Encodable, Sendable {
     var messages: [ChatMessage]
     var maxTokens: Int?
     var maxCompletionTokens: Int?
+    var reasoningEffort: String?
     var temperature: Double?
     var stream = true
+
+    /// Hidden reasoning counts against `max_completion_tokens`, and a limit reached while reasoning
+    /// leaves an empty answer. OpenAI's reasoning guide says to reserve at least 25,000 tokens for
+    /// reasoning when starting out, so that much goes on top of the answer's own budget. Low effort
+    /// keeps the reasoning well inside it, and only the tokens used are billed.
+    static let reasoningTokens = 25_000
 
     init(_ request: ChatRequest, isOpenAI: Bool) {
         model = request.model
         messages = request.messages
         if Self.isReasoningModel(request.model) {
-            maxCompletionTokens = request.maxTokens
+            maxCompletionTokens = request.maxTokens + Self.reasoningTokens
+            reasoningEffort = "low"
         } else if isOpenAI {
             maxCompletionTokens = request.maxTokens
             temperature = request.temperature
