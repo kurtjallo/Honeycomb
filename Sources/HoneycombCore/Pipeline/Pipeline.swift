@@ -139,19 +139,27 @@ public actor Pipeline {
     private func run() async {
         while true {
             if Task.isCancelled { return }
-            let skipping: Set<JobKind> = host.gate.isRecording ? Set(JobKind.allCases.filter(usesThisMac)) : []
-            guard let job = try? database.claimNextJob(skipping: skipping) else {
+            guard let (job, task) = claimNextJob() else {
                 await sleep(for: .seconds(policy.idlePoll))
                 continue
             }
-            let task = Task { try await self.perform(job) }
-            current = (job, task, false)
             let result = await task.result
             let again = current?.again == true
             current = nil
             finish(job, result: result)
             if again, let meeting = job.meetingId { enqueue(job.kind, meeting: meeting) }
         }
+    }
+
+    /// Synchronous, so no suspension point can fall between reading the recording gate and making the
+    /// job `current`: a recording that starts at any moment either keeps model jobs from being
+    /// claimed or finds the job to cancel in `recordingStarted()`.
+    private func claimNextJob() -> (Job, Task<Void, Error>)? {
+        let skipping: Set<JobKind> = host.gate.isRecording ? Set(JobKind.allCases.filter(usesThisMac)) : []
+        guard let job = try? database.claimNextJob(skipping: skipping) else { return nil }
+        let task = Task { try await self.perform(job) }
+        current = (job, task, false)
+        return (job, task)
     }
 
     private func sleep(for duration: Duration) async {
