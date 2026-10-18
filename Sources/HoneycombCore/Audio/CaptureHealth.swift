@@ -62,6 +62,9 @@ public struct CaptureHealthMachine: Sendable {
     private var silenceSinceMs: Int64?
     private var silenceWarned = false
     private var pausedAtMs: Int64?
+    /// The session drains the old capture before a start or restart and handles those writes after it,
+    /// so a write stamped at or before this time came from the capture that was torn down.
+    private var staleBeforeMs: Int64?
 
     public init(policy: CapturePolicy = .standard) {
         self.policy = policy
@@ -76,11 +79,13 @@ public struct CaptureHealthMachine: Sendable {
         switch event {
         case .started(let now):
             phase = .starting(sinceMs: now)
+            staleBeforeMs = now
             pausedAtMs = nil
             silenceSinceMs = nil
             return []
 
         case .wrote(let now, let silent):
+            if let staleBeforeMs, now <= staleBeforeMs { return [] }
             var commands = trackSilence(now: now, silent: silent)
             lastWriteMs = now
             switch phase {
@@ -118,11 +123,13 @@ public struct CaptureHealthMachine: Sendable {
         case .restartSucceeded(let now):
             guard case .restarting = phase else { return [] }
             phase = .starting(sinceMs: now)
+            staleBeforeMs = now
             openInterruption?.resumedAtMs = nil
             return []
 
         case .restartFailed(let now):
             guard case .restarting = phase else { return [] }
+            staleBeforeMs = now
             return scheduleRestart(now: now)
 
         case .paused(let now):
