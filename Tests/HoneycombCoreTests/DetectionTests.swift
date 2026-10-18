@@ -98,6 +98,18 @@ struct DetectionTests {
         #expect(ticks(12_000, 30_000).isEmpty)
     }
 
+    @Test mutating func micComingBackAfterTheCallEndedResumes() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "us.zoom.xos", atMs: 0))
+        _ = ticks(0, 3_000)
+        _ = machine.handle(.startNotes(key: "1"))
+        _ = machine.handle(.recordingStarted(key: "1"))
+        _ = machine.handle(.micStopped(key: "1", atMs: 10_000))
+        #expect(ticks(10_000, 15_000) == [.callEnded])
+        #expect(machine.handle(.micStarted(key: "2", bundleID: "us.zoom.xos", atMs: 16_000)) == [.callResumed])
+        _ = machine.handle(.micStopped(key: "2", atMs: 20_000))
+        #expect(ticks(20_000, 25_000) == [.callEnded], "the call can end again")
+    }
+
     @Test mutating func manualRecordingNeverAutoStops() {
         _ = machine.handle(.recordingStarted(key: nil))
         _ = machine.handle(.micStarted(key: "1", bundleID: "us.zoom.xos", atMs: 0))
