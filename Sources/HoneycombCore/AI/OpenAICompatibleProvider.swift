@@ -20,9 +20,14 @@ public struct OpenAICompatibleProvider: ChatProvider, EmbeddingProvider {
         transport = ProviderTransport(session: session, policy: policy ?? (isLocal ? .local : .cloud), gate: gate)
     }
 
-    /// People paste base URLs with or without `/v1`. A path that already names a version, such as
-    /// `/api/v1` or Gemini's `/v1beta/openai`, is used as given.
+    /// People paste base URLs with or without `/v1`, and sometimes the full endpoint copied from a
+    /// curl example, which is trimmed off. A path that already names a version, such as `/api/v1` or
+    /// Gemini's `/v1beta/openai`, is used as given.
     static func apiRoot(_ url: URL) -> URL {
+        var url = url
+        for endpoint in [["chat", "completions"], ["messages"]] where url.pathComponents.suffix(endpoint.count).elementsEqual(endpoint) {
+            for _ in endpoint { url.deleteLastPathComponent() }
+        }
         let hasVersion = url.pathComponents.contains { $0.first == "v" && $0.dropFirst().first?.isNumber == true }
         return hasVersion ? url : url.appending(path: "v1")
     }
