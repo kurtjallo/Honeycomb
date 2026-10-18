@@ -75,7 +75,7 @@ struct RouterTests {
         #expect(try Keychain.secret(status: errSecItemNotFound, result: nil) == nil)
     }
 
-    @Test("a provider whose key can't be read fails with the Keychain error instead of sending no key", arguments: [
+    @Test("a provider whose key can't be read fails with a lasting provider error instead of sending no key", arguments: [
         ProviderKind.openAICompatible, .anthropic,
     ])
     func unreadableKeyStopsTheRequest(kind: ProviderKind) throws {
@@ -84,7 +84,10 @@ struct RouterTests {
         try database.saveRoute(Route(task: .enhance, providerId: saved.id, model: "x"))
         keychain.readError.withLock { $0 = Keychain.KeychainError.status(errSecInteractionNotAllowed) }
 
-        #expect(throws: Keychain.KeychainError.status(errSecInteractionNotAllowed)) { try router.resolve(.enhance) }
+        let error = #expect(throws: ProviderError.self) { try router.resolve(.enhance) }
+        #expect(error?.code == "keychain_unavailable")
+        #expect(error?.isTransient == false)
+        #expect(error.flatMap { ProviderError(code: $0.code) } == error, "a stored code reads back")
     }
 
     @Test func keysLiveInKeychainAndLeaveWithTheProvider() throws {
