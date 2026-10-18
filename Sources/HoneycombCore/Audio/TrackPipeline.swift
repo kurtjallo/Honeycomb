@@ -68,10 +68,9 @@ final class TrackPipeline: @unchecked Sendable {
 
     func begin() throws {
         try queue.sync {
+            // Fail at once rather than wait on the session actor; the capture health retries pace the attempts.
             if let hungStop {
-                guard hungStop.wait(timeout: .now() + stopTimeout) == .success else {
-                    throw RecorderError("previous stop still running")
-                }
+                guard hungStop.wait(timeout: .now()) == .success else { throw RecorderError("previous stop still running") }
                 self.hungStop = nil
             }
             let sink = AudioSink()
