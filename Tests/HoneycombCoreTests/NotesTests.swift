@@ -457,10 +457,10 @@ struct KeychainTests {
     @Test func storesAndDeletesKeys() throws {
         let keychain = Keychain(service: "io.github.kurtjallo.Honeycomb.tests.\(UUID().uuidString)")
         try keychain.set("sk-one", account: "openai")
-        #expect(keychain.get(account: "openai") == "sk-one")
+        #expect(try keychain.read(account: "openai") == "sk-one")
         try keychain.set("sk-two", account: "openai")
-        #expect(keychain.get(account: "openai") == "sk-two")
+        #expect(try keychain.read(account: "openai") == "sk-two")
         keychain.deleteAll()
-        #expect(keychain.get(account: "openai") == nil)
+        #expect(try keychain.read(account: "openai") == nil)
     }
 }

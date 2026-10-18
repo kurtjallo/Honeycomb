@@ -44,11 +44,6 @@ public struct Keychain: SecretStore {
         return try Self.secret(status: status, result: result)
     }
 
-    /// Only `KeychainTests` still reads keys this way. Use `read(account:)`, which reports failures.
-    public func get(account: String) -> String? {
-        (try? read(account: account)) ?? nil
-    }
-
     static func secret(status: OSStatus, result: AnyObject?) throws -> String? {
         switch status {
         case errSecSuccess: (result as? Data).flatMap { String(data: $0, encoding: .utf8) }
