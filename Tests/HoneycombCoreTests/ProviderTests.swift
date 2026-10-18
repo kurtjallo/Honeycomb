@@ -212,6 +212,19 @@ private struct StreamChat: ChatProvider {
         #expect(bodies.map(\.temperature) == [nil, nil, nil, 0.3])
     }
 
+    @Test("gpt-5 chat variants don't reason, so they get no reasoning_effort or headroom, and keep the fields OpenAI took before",
+          arguments: ["gpt-5-chat-latest", "openai/gpt-5-chat"])
+    func chatVariantsDontReason(model: String) async throws {
+        let server = StubServer(.init(body: sse(content("ok"), "[DONE]")))
+        let provider = OpenAICompatibleProvider(baseURL: server.url("/v1"), apiKey: "sk-test", isLocal: false, session: server.session)
+
+        _ = try await provider.complete(ChatRequest(model: model, messages: chat.messages))
+
+        let body = try SentBody(#require(server.requests.first))
+        #expect(body.reasoningEffort == nil)
+        #expect(body.maxTokens == nil && body.maxCompletionTokens == 2_000 && body.temperature == nil)
+    }
+
     @Test("other OpenAI-compatible servers keep max_tokens and temperature for models that aren't OpenAI reasoning models")
     func otherServersKeepMaxTokens() async throws {
         let server = StubServer(.init(body: sse(content("ok"), "[DONE]")))
