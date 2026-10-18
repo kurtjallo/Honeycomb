@@ -125,7 +125,7 @@ struct MeetingDetail: View {
             .frame(width: 460)
         }
         .onAppear { title = meeting.title }
-        .onChange(of: meeting.title) { title = meeting.title }
+        .onChange(of: meeting.title) { old, new in if title == old { title = new } }
         .onDisappear { model.rename(meeting, to: title) }
         .onChange(of: generating?.id) { pinned = nil }
         .task(id: meeting.id) {
