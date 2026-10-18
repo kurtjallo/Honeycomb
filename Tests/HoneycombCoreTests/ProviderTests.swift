@@ -347,6 +347,40 @@ private struct StreamChat: ChatProvider {
         #expect(server.requests.count == 1, "a timeout has used its whole budget, so it is not retried")
     }
 
+    @Test("a stream that closes with no finish_reason and no [DONE] fails as cut off instead of finishing")
+    func closesUnfinished() async {
+        let server = StubServer(.init(body: sse(content("Half the no"))))
+        let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: true, session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("Half the no")])
+        #expect(outcome.error == .unreachable, "transient, so the job queue retries it later")
+    }
+
+    @Test("a stream that sends its finish_reason but closes before [DONE] still finishes")
+    func finishReasonWithoutDone() async {
+        let server = StubServer(.init(body: sse(content("Notes"), #"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#)))
+        let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: nil, isLocal: true, session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("Notes"), .finished(.stop)])
+    }
+
+    @Test("a content_filter finish is an error, not a clean stop")
+    func contentFilter() async {
+        let server = StubServer(.init(body: sse(
+            content("Notes"), #"{"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}"#, "[DONE]")))
+        let provider = OpenAICompatibleProvider(baseURL: server.url(), apiKey: "sk-test", isLocal: false, session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("Notes")])
+        #expect(outcome.error?.code == "refused")
+        #expect(outcome.error?.isTransient == false)
+    }
+
     @Test("SSE comment lines, such as OpenRouter's while a reasoning model thinks, keep the attempt alive")
     func commentsKeepTheAttemptAlive() async {
         let keepAlive = Data(": OPENROUTER PROCESSING\n\n".utf8)
@@ -434,6 +468,44 @@ private struct StreamChat: ChatProvider {
         #expect(body.system == "Write notes.", "system messages move to the top-level system field")
         #expect(body.messages == [ChatMessage(.user, "Transcript")])
         #expect(body.maxTokens == 2_000 && body.stream == true)
+    }
+
+    @Test("a stream that closes with no stop_reason and no message_stop fails as cut off instead of finishing")
+    func closesUnfinished() async {
+        let server = StubServer(.init(body: Data("""
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Half"}}
+
+
+            """.utf8)))
+        let provider = AnthropicProvider(apiKey: "sk-ant-test", baseURL: server.url(), session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("Half")])
+        #expect(outcome.error == .unreachable)
+    }
+
+    @Test("a refusal stop is an error, not a clean stop")
+    func refusal() async {
+        let server = StubServer(.init(body: Data("""
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}}
+
+            event: message_delta
+            data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+
+
+            """.utf8)))
+        let provider = AnthropicProvider(apiKey: "sk-ant-test", baseURL: server.url(), session: server.session)
+
+        let outcome = await Outcome(provider.stream(chat))
+
+        #expect(outcome.deltas == [.text("I")])
+        #expect(outcome.error?.code == "refused")
     }
 
     @Test("an overloaded_error event maps to .rateLimited")
