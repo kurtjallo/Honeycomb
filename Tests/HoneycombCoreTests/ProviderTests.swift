@@ -9,13 +9,16 @@ private let chat = ChatRequest(model: "test-model", messages: [ChatMessage(.syst
     @Test("https, and plain http on this Mac or the local network, are allowed", arguments: [
         "https://api.openai.com/v1", "http://localhost:11434", "http://127.0.0.1:1234", "http://[::1]:8080",
         "http://192.168.1.5:1234", "http://10.0.0.2", "http://172.16.0.9", "http://mac.local:11434",
+        "http://0.0.0.0:11434", "http://[fe80::1]:8080", "http://[fe80::1%25en0]:8080", "http://[::ffff:192.168.1.5]:1234",
+        "http://[::ffff:127.0.0.1]:1234",
     ])
     func allows(_ url: String) throws {
         try ProviderURLPolicy.check(#require(URL(string: url)))
     }
 
     @Test("plain http to a public address, or any other scheme, is refused", arguments: [
-        "http://example.com", "http://8.8.8.8", "http://172.32.0.1", "ftp://192.168.1.5",
+        "http://example.com", "http://8.8.8.8", "http://172.32.0.1", "ftp://192.168.1.5", "http://[::ffff:8.8.8.8]",
+        "http://100.64.0.1",
     ])
     func refuses(_ url: String) throws {
         let url = try #require(URL(string: url))
