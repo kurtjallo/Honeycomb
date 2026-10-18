@@ -27,13 +27,21 @@ struct RecordingLifecycleTests {
         #expect(lifecycle.phase == .idle)
     }
 
-    @Test mutating func startDuringAStopIsIgnored() {
+    @Test mutating func aManualStartDuringAStopIsIgnored() {
         recording()
         _ = lifecycle.handle(.stop)
         #expect(lifecycle.handle(.start(.newMeeting)).isEmpty)
-        #expect(lifecycle.handle(.start(.call(Self.prompt(replacing: true)))).isEmpty)
         _ = lifecycle.handle(.stopFinished)
         #expect(lifecycle.phase == .idle)
+    }
+
+    @Test mutating func aPromptClickedDuringAStopStartsWhenTheStopEnds() {
+        recording()
+        _ = lifecycle.handle(.stop)
+        let call = StartTarget.call(Self.prompt(replacing: false))
+        #expect(lifecycle.handle(.start(call)).isEmpty, "the stop already running is not started twice")
+        #expect(lifecycle.handle(.stopFinished) == [.startCapture(call)])
+        #expect(lifecycle.phase.isStarting)
     }
 
     @Test mutating func aStartRecordsIntoTheSelectedDraft() {
