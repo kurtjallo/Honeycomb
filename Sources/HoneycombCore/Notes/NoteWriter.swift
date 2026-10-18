@@ -79,6 +79,7 @@ public struct NoteWriter: Sendable {
         } catch {
             let cancelled = error is CancellationError || error as? ProviderError == .cancelled
             if lastWrite != nil {
+                note.markdown = NotesPrompt.parseOutput(raw, sections: input.template.sections).body
                 note.status = cancelled ? .canceled : .failed
                 note.errorCode = (error as? ProviderError)?.code ?? "failed"
                 try? database.saveEnhanced(note)
