@@ -10,7 +10,6 @@ struct HoneycombApp: App {
             MainWindow()
                 .environment(delegate.model)
                 .tint(.accentStrong)
-                .honeycombAppearance()
                 .frame(minWidth: 720, minHeight: 520)
         }
         .defaultSize(width: 960, height: 760)
@@ -19,7 +18,6 @@ struct HoneycombApp: App {
         MenuBarExtra {
             MenuBarContent()
                 .environment(delegate.model)
-                .honeycombAppearance()
         } label: {
             MenuBarLabel(model: delegate.model)
         }
@@ -28,7 +26,6 @@ struct HoneycombApp: App {
             SettingsView()
                 .environment(delegate.model)
                 .tint(.accentStrong)
-                .honeycombAppearance()
         }
     }
 }

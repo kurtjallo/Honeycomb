@@ -50,31 +50,25 @@ enum AppearanceChoice: String, CaseIterable, Identifiable {
         }
     }
 
-    /// `nil` leaves the window on the system appearance.
-    var colorScheme: ColorScheme? {
+    /// `nil` follows macOS.
+    var appearance: NSAppearance? {
         switch self {
         case .system: nil
-        case .light: .light
-        case .dark: .dark
-        }
-    }
-
-    func isDark(system: ColorScheme) -> Bool {
-        switch self {
-        case .system: system == .dark
-        case .light: false
-        case .dark: true
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
         }
     }
 }
 
-/// Panels built with `NSHostingView` are not inside a scene, so they do not inherit the window's
-/// `preferredColorScheme`. This is the one place those roots, and the scenes, read the setting.
+/// Sets the appearance for the whole app, so windows and panels follow the setting, and System
+/// hands them back to macOS. `preferredColorScheme` can't: its views keep the old scheme after it
+/// goes back to nil. The menu bar label carries this, because it is the one view that lives from
+/// launch to quit.
 private struct HoneycombAppearance: ViewModifier {
     @AppStorage(AppearanceChoice.defaultsKey) private var appearance = AppearanceChoice.system
 
     func body(content: Content) -> some View {
-        content.preferredColorScheme(appearance.colorScheme)
+        content.onChange(of: appearance, initial: true) { NSApp.appearance = appearance.appearance }
     }
 }
 

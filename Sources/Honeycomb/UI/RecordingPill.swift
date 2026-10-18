@@ -20,7 +20,7 @@ final class RecordingPillController {
             panel.backgroundColor = .clear
             panel.hasShadow = true
             panel.hidesOnDeactivate = false
-            let host = NSHostingView(rootView: RecordingPill().environment(model).honeycombAppearance())
+            let host = NSHostingView(rootView: RecordingPill().environment(model))
             host.sizingOptions = [.preferredContentSize]
             panel.contentView = host
             self.panel = panel

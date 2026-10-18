@@ -229,7 +229,6 @@ final class EditorSchemeHandler: NSObject, WKURLSchemeHandler {
 /// Puts the shared editor web view into a SwiftUI layout.
 struct EditorView: NSViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(AppearanceChoice.defaultsKey) private var appearance = AppearanceChoice.system
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
@@ -241,7 +240,7 @@ struct EditorView: NSViewRepresentable {
     /// editor after it made the incoming one, and taking the web view back would carry it out of
     /// the window with the outgoing view.
     func updateNSView(_ view: NSView, context: Context) {
-        EditorHost.shared.setTheme(dark: appearance.isDark(system: colorScheme))
+        EditorHost.shared.setTheme(dark: colorScheme == .dark)
     }
 
     private func attach(to container: NSView) {

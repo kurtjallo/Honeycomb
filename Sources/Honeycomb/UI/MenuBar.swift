@@ -8,6 +8,7 @@ struct MenuBarLabel: View {
     var body: some View {
         Image(systemName: model.isRecording ? "hexagon.fill" : "hexagon")
             .onAppear { model.openWindow = openWindow }
+            .honeycombAppearance()
     }
 }
 
