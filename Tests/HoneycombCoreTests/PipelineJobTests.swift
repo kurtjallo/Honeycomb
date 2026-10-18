@@ -111,6 +111,25 @@ struct PipelineJobTests {
         await pipeline.stop()
     }
 
+    @Test func aRecordingStopsBuiltInNotesEvenAfterTheRouteMovesToTheCloud() async throws {
+        let calls = CallCounter()
+        let preempted = CallCounter()
+        await handle { _ in
+            guard await calls.add() == 1 else { return .written(UUID()) }
+            do { try await Task.sleep(for: .seconds(30)) } catch { await preempted.add(); throw error }
+            return .written(UUID())
+        }
+        await pipeline.start()
+        await pipeline.enqueue(.enhance, meeting: meeting.id)
+        #expect(await eventually { await calls.count == 1 })
+
+        try routeNotes(to: "https://api.openai.com/v1")
+        host.gate.set(true)
+        await pipeline.recordingStarted()
+        #expect(await eventually { await preempted.count == 1 }, "the built-in job that runs stops for the recording")
+        await pipeline.stop()
+    }
+
     @Test func notesOnAnotherMachineStartDuringARecording() async throws {
         try routeNotes(to: "https://api.openai.com/v1")
         let calls = CallCounter()
