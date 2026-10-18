@@ -219,6 +219,13 @@ struct NoteWriterTests {
         #expect(try database.enhancedNotes(meeting.id).first?.markdown == "# Summary\n\n- Acme renews if SSO ships by Q1")
     }
 
+    @Test func reasoningBeforeABareThinkCloseIsDropped() async throws {
+        let answer = ["Okay, the user wants notes.\n</thi", "nk>\n\n# Acme renewal\n\n## Summary\n\n- a"]
+        _ = try await writer(FakeChat(chunks: answer)).write(meeting.id)
+        #expect(try database.meeting(meeting.id)?.title == "Acme renewal")
+        #expect(try database.enhancedNotes(meeting.id).first?.markdown == "## Summary\n\n- a")
+    }
+
     @Test func typedNotesDriveAuthorship() async throws {
         try database.saveUserNote(UserNote(meetingId: meeting.id, doc: nil, markdown: "acme renews if SSO by Q1"))
         _ = try await writer(FakeChat(chunks: ["# T\n\n## Summary\n\nAcme renews if SSO ships by Q1.\n\nThey asked about seats."])).write(meeting.id)
@@ -306,6 +313,23 @@ struct NoteWriterTests {
         try longCall(minutes: 30)
         _ = try await writer(smallModel(context: 8_192, summaryFinish: .length), context: 8_192).write(meeting.id)
         #expect(try database.enhancedNotes(meeting.id).first?.status == .done)
+    }
+
+    @Test func partSummariesDropReasoningBeforeABareThinkClose() async throws {
+        try longCall(minutes: 30)
+        let prompts = Recorded<String>()
+        let provider = ScriptedChat { request, continuation in
+            if request.messages.first?.content == NotesPrompt.partSystem {
+                continuation.answer("Okay, the user wants bullets.\n</think>\n- [00:05] A point")
+            } else {
+                await prompts.add(request.messages.last?.content ?? "")
+                continuation.answer("# T\n\n- a")
+            }
+        }
+        _ = try await writer(provider, context: 8_192).write(meeting.id)
+        let prompt = try #require(await prompts.values.last)
+        #expect(prompt.contains("- [00:05] A point"))
+        #expect(!prompt.contains("</think>"))
     }
 
     @Test func summariesThatNeverShrinkStopAsTooLong() async throws {
