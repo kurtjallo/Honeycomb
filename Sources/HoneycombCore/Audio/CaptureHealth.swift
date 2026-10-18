@@ -65,6 +65,8 @@ public struct CaptureHealthMachine: Sendable {
     /// The session drains the old capture before a start or restart and handles those writes after it,
     /// so a write stamped at or before this time came from the capture that was torn down.
     private var staleBeforeMs: Int64?
+    /// Set when `captureLost` goes out, cleared once the track is running again.
+    private var lossReported = false
 
     public init(policy: CapturePolicy = .standard) {
         self.policy = policy
@@ -92,6 +94,7 @@ public struct CaptureHealthMachine: Sendable {
             case .starting, .lost: phase = .running
             default: break
             }
+            if phase == .running { lossReported = false }
             if openInterruption != nil, openInterruption?.resumedAtMs == nil, phase == .running {
                 openInterruption?.resumedAtMs = now
             }
@@ -208,10 +211,11 @@ public struct CaptureHealthMachine: Sendable {
             phase = .waitingToRestart(attempt: attempt, atMs: now + policy.restartDelaysMs[used])
             return tick(now: now)
         }
-        let alreadyLost = if case .lost = phase { true } else { false }
         phase = .lost(retryAtMs: now + policy.lostRetryMs)
         openInterruption?.resumedAtMs = nil
-        return alreadyLost ? [] : [.captureLost(atMs: now)]
+        guard !lossReported else { return [] }
+        lossReported = true
+        return [.captureLost(atMs: now)]
     }
 
     private mutating func checkRecovered(now: Int64) -> [CaptureCommand] {
