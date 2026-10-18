@@ -64,6 +64,11 @@ struct MarkdownTests {
         #expect(Markdown.document("  1. x\n\n- y").plainText == "x\ny")
     }
 
+    @Test func nestedEmphasisGivesEachMarkOnce() {
+        #expect(Markdown.inline("**a __b__ c**") == [.text("a b c", marks: [.bold])])
+        #expect(Markdown.inline("*a _b_ c*") == [.text("a b c", marks: [.italic])])
+    }
+
     @Test func documentJSONRoundTrips() throws {
         let doc = Markdown.document("## Hi\n\n- [x] done")
         let decoded = try #require(PMNode.decode(doc.encoded()))
