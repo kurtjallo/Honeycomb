@@ -172,6 +172,23 @@ struct RecordingLifecycleTests {
         #expect(lifecycle.handle(.stopFinished) == [.quit])
     }
 
+    @Test func theModelsStayHeldFromTheStopUntilTheAppExits() {
+        let meeting = UUID()
+        let paths: [[RecordingEvent]] = [
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .quitConfirmed, .stopFinished],
+            [.start(.newMeeting), .quitConfirmed, .captureFailed(nil)],
+            [.start(.newMeeting), .quitConfirmed, .captureOpened(meetingID: meeting), .stopFinished],
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .stop, .quitRequested, .stopFinished],
+            [.quitRequested],
+        ]
+        for events in paths {
+            var lifecycle = RecordingLifecycle()
+            for event in events { _ = lifecycle.handle(event) }
+            #expect(lifecycle.phase == .quitting)
+            #expect(lifecycle.phase.holdsModels, "no model job starts while the app quits: \(events)")
+        }
+    }
+
     @Test func onlyAStartClickOpensCapture() {
         var generator = SplitMix(seed: 7)
         let events: [RecordingEvent] = [
