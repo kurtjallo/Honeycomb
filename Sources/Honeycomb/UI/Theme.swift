@@ -17,6 +17,8 @@ extension Color {
     static let selection = Color(light: 0xFAE6B0, dark: 0x3E3215)
     static let recording = Color(light: 0xFF3B30, dark: 0xFF453A)
     static let recordingText = Color(light: 0xC42B1C, dark: 0xFF6B61)
+    /// The Stop button's fill. White on it is 5.4:1; on `recording` it would be under 3.6:1.
+    static let recordingFill = Color(light: 0xD70015, dark: 0xD70015)
     static let warning = Color(light: 0xC2410C, dark: 0xFF8A4C)
     static let warningSubtle = Color(light: 0xFDEBDD, dark: 0x3D2617)
 
@@ -113,7 +115,7 @@ struct HoneyButtonStyle: ButtonStyle {
         }
 
         private var fill: Color {
-            if isRecording { return .recording }
+            if isRecording { return .recordingFill }
             return hovering || configuration.isPressed ? .accentHover : .accent
         }
     }
