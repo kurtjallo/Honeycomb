@@ -20,7 +20,7 @@ public enum Markdown {
         func flushList() {
             guard !listLines.isEmpty else { return }
             var index = 0
-            blocks += lists(listLines, level: listLines[0].level, index: &index, newBlockID: newBlockID)
+            blocks += lists(listLines, level: listLines.map(\.level).min() ?? 0, index: &index, newBlockID: newBlockID)
             listLines = []
         }
 
