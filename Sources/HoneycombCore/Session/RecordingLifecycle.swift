@@ -149,7 +149,12 @@ public struct RecordingLifecycle: Sendable {
                 phase = .starting(target, quitWhenOpen: false)
                 return [.startCapture(target)]
             }
-            guard let active = phase.capturing, case .call(let prompt) = target, prompt.replacesRecording else { return [] }
+            guard case .call(let prompt) = target else { return [] }
+            if case .stopping(let active, .nothing) = phase {
+                phase = .stopping(active, then: .start(target))
+                return []
+            }
+            guard let active = phase.capturing, prompt.replacesRecording else { return [] }
             phase = .stopping(active, then: .start(target))
             return [.stopCapture]
 
