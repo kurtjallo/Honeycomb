@@ -224,7 +224,7 @@ struct NotesMenu: View {
                 }
             }
             Divider()
-            Button("Copy notes") { model.copyNotes(meeting) }
+            Button("Copy notes") { if let shown { model.copyNotes(shown) } }
         } label: {
             Label("Notes options", systemImage: "ellipsis.circle")
         }

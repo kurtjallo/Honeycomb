@@ -398,10 +398,8 @@ final class AppModel {
         try? database?.setCurrentEnhanced(meeting.id, version.id)
     }
 
-    /// Copies the current notes as rich text and Markdown, so headings and lists survive a paste.
-    func copyNotes(_ meeting: Meeting) {
-        guard let database, let id = meeting.currentEnhancedId,
-              let note = try? database.enhancedNotes(meeting.id).first(where: { $0.id == id }) else { return }
+    /// Copies notes as rich text and Markdown, so headings and lists survive a paste.
+    func copyNotes(_ note: EnhancedNote) {
         let doc = note.doc.flatMap(PMNode.decode) ?? Markdown.document(note.markdown)
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
