@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Synchronization
 import Testing
 @testable import HoneycombCore
@@ -64,6 +65,14 @@ struct RouterTests {
         #expect(claude.keyRef == nil)
         try database.saveRoute(Route(task: .enhance, providerId: claude.id, model: "claude-opus-5-5"))
         #expect(throws: ProviderError.unauthorized) { try router.resolve(.enhance) }
+    }
+
+    @Test("a Keychain read that fails, such as while the keychain is locked, is an error, not a missing key")
+    func keychainReadFailureIsAnError() throws {
+        #expect(throws: Keychain.KeychainError.status(errSecInteractionNotAllowed)) {
+            try Keychain.secret(status: errSecInteractionNotAllowed, result: nil)
+        }
+        #expect(try Keychain.secret(status: errSecItemNotFound, result: nil) == nil)
     }
 
     @Test func keysLiveInKeychainAndLeaveWithTheProvider() throws {
