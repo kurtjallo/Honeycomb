@@ -109,7 +109,7 @@ final class CallPromptPanels {
             self?.hide(prompt.key)
             choose(start)
         }
-        let host = NSHostingView(rootView: view.honeycombAppearance())
+        let host = NSHostingView(rootView: view)
         host.sizingOptions = [.preferredContentSize]
         panel.contentView = host
         if let screen = NSScreen.main {
