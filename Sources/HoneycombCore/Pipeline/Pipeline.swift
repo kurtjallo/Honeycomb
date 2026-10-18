@@ -60,11 +60,15 @@ public actor Pipeline {
         loop = Task { await self.run() }
     }
 
-    /// Ends the loop. The job in progress stops and goes back in the queue.
+    /// Ends the loop. The job in progress stops and goes back in the queue at once, without using
+    /// an attempt, because a model may finish its current step after the app has quit.
     public func stop() {
         loop?.cancel()
         loop = nil
-        current?.task.cancel()
+        if let current {
+            current.task.cancel()
+            try? database.deferJob(current.job, until: Date())
+        }
         nudge()
     }
 
