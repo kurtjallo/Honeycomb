@@ -306,7 +306,8 @@ public actor Pipeline {
     }
 
     public func retry(_ meeting: UUID) {
-        let next: JobKind = ((try? database.transcript(meeting).isEmpty) ?? true) ? .finalizeAudio : .enhance
+        let hasFinal = (try? database.transcript(meeting).contains { $0.pass == .final }) ?? false
+        let next: JobKind = hasFinal ? .enhance : .finalizeAudio
         enqueue(next, meeting: meeting)
     }
 }
