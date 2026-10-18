@@ -260,7 +260,7 @@ final class AppModel {
 
     /// A selected draft note is recorded into, not beside.
     private var startTarget: StartTarget {
-        guard let selection, meetings.first(where: { $0.id == selection })?.state == .draft else { return .newMeeting }
+        guard let selection, (try? database?.meeting(selection))??.state == .draft else { return .newMeeting }
         return .draft(selection)
     }
 
