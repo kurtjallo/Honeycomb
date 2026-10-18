@@ -141,6 +141,7 @@ public actor RecordingSession {
     @discardableResult
     public func stop() async -> SessionMeta {
         guard state == .recording || state == .paused else { return meta }
+        state = .stopped
         tickTask?.cancel()
         let now = clock.nowMs()
         for (channel, pipeline) in pipelines {
@@ -154,7 +155,6 @@ public actor RecordingSession {
         }
         meta.endedAt = Date()
         meta.durationMs = now
-        state = .stopped
         writeMeta()
         statusContinuation.finish()
         audioContinuation.finish()
@@ -223,8 +223,9 @@ public actor RecordingSession {
         }
     }
 
+    /// The final drain at stop can still report a failed write; that must not reopen capture.
     private func restart(_ channel: Channel, attempt: Int) {
-        guard let pipeline = pipelines[channel] else { return }
+        guard state == .recording, let pipeline = pipelines[channel] else { return }
         closed(pipeline.end(), on: channel)
         if var last = meta[channel].interruptions.last {
             last.attempts = attempt
