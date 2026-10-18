@@ -88,7 +88,8 @@ public enum DictionaryCorrector {
                 let (core, trailing) = splitPunctuation(window.joined(separator: " "))
                 let candidate = normalize(core)
                 if candidate != target, !candidate.isEmpty, candidate.first == target.first,
-                   matches(candidate, target, minSimilarity: minSimilarity) {
+                   matches(candidate, target, minSimilarity: minSimilarity,
+                           isName: looksLikeName(window, after: index > 0 ? words[index - 1] : nil)) {
                     words.replaceSubrange(index..<index + n, with: [term + trailing])
                     index += 1
                 } else {
@@ -103,9 +104,28 @@ public enum DictionaryCorrector {
         text.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    static func matches(_ candidate: String, _ target: String, minSimilarity: Double) -> Bool {
-        similarity(candidate, target) >= minSimilarity
+    static func matches(_ candidate: String, _ target: String, minSimilarity: Double, isName: Bool) -> Bool {
+        let score = similarity(candidate, target)
+        return score >= minSimilarity
             || similarity(soundSpelling(candidate), soundSpelling(target)) >= minSimilarity
+            || (isName && score >= 0.6 && soundKey(candidate) == soundKey(target))
+    }
+
+    /// Speech recognition capitalizes a name mid-sentence but writes "been" or "time" in lowercase,
+    /// so only capitalized words that don't start a sentence get the looser sound-alike match.
+    static func looksLikeName(_ window: ArraySlice<String>, after previous: String?) -> Bool {
+        guard let last = previous?.last, !".!?".contains(last) else { return false }
+        return window.allSatisfy { $0.first?.isUppercase == true }
+    }
+
+    /// The consonants of the sound spelling, so "shawn" and "sean" are both "sn".
+    static func soundKey(_ word: String) -> String {
+        var key = ""
+        for (index, character) in soundSpelling(word).enumerated() {
+            if index > 0, "aeiouyhw".contains(character) { continue }
+            if key.last != character { key.append(character) }
+        }
+        return key
     }
 
     static func soundSpelling(_ word: String) -> String {
