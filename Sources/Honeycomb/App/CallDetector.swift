@@ -33,12 +33,13 @@ final class CallDetector {
                 guard let self else { return }
                 self.machine.accessibilityTrusted = BrowserTitles.isTrusted
                 self.run(self.machine.handle(.tick(atMs: self.now)))
+                self.model?.tick()
             }
         }
         sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { _ in
-            Task { @MainActor [weak self] in await self?.model?.stopRecording() }
+            Task { @MainActor [weak self] in self?.model?.stopRecording() }
         }
     }
 
@@ -75,11 +76,11 @@ final class CallDetector {
             case .hide(let key):
                 prompts.hide(key)
             case .startRecording(let prompt):
-                Task { await model?.startFromPrompt(prompt) }
+                model?.startFromPrompt(prompt)
             case .callEnded:
                 model?.callEnded()
             case .callResumed:
-                model?.keepRecording()
+                model?.callResumed()
             }
         }
     }

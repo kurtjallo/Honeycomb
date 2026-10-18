@@ -85,10 +85,12 @@ struct RecordButton: View {
 
     var body: some View {
         Button {
-            Task { await model.toggleRecording() }
+            model.toggleRecording()
         } label: {
             if model.isStartingRecording {
                 Label("Starting…", systemImage: "hourglass")
+            } else if model.isStoppingRecording {
+                Label("Stopping…", systemImage: "hourglass")
             } else {
                 Label(model.isRecording ? "Stop" : "Start notes", systemImage: model.isRecording ? "stop.fill" : "hexagon.fill")
             }
@@ -96,6 +98,6 @@ struct RecordButton: View {
         .labelStyle(.titleAndIcon)
         .buttonStyle(HoneyButtonStyle(isRecording: model.isRecording, large: large))
         .help(model.isRecording ? "Stop recording (⇧⌘R)" : "Start taking notes (⇧⌘R)")
-        .disabled(model.isStartingRecording)
+        .disabled(model.isStartingRecording || model.isStoppingRecording)
     }
 }

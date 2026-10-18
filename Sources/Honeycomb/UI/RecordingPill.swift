@@ -88,13 +88,13 @@ struct RecordingPill: View {
                 }
                 Spacer(minLength: 0)
                 Button {
-                    Task { await model.pauseOrResume() }
+                    model.pauseOrResume()
                 } label: {
                     Image(systemName: model.status.isPaused ? "play.fill" : "pause.fill")
                 }
                 .help(model.status.isPaused ? "Resume" : "Pause")
                 Button {
-                    Task { await model.stopRecording() }
+                    model.stopRecording()
                 } label: {
                     Image(systemName: "stop.fill")
                 }

@@ -10,7 +10,7 @@ final class AppModel {
     private(set) var database: AppDatabase?
     private(set) var meetings: [Meeting] = []
     var selection: UUID?
-    private(set) var recordingMeetingID: UUID?
+    private(set) var lifecycle = RecordingLifecycle()
     private(set) var status = RecordingStatus()
     var showConsent = false
     var alert: AppAlert?
@@ -33,17 +33,19 @@ final class AppModel {
     private var recorder: MeetingRecorder?
     private var modelTask: Task<Void, Never>?
     private var detector: CallDetector?
-    private var autoStop: Task<Void, Never>?
-    /// Two quick clicks would start two captures, and a failed one would clear the other's recording flag.
-    /// True while capture is starting. macOS shows its permission prompts during this wait.
-    private(set) var isStartingRecording = false
     /// Seconds left before an automatic stop, while the user can still keep recording.
     private(set) var autoStopCountdown: Int?
+    private let launchedAt = ContinuousClock.now
+    private var starting: Task<Void, Never>?
     private var statusTask: Task<Void, Never>?
     private var listTask: Task<Void, Never>?
     let pill = RecordingPillController()
 
-    var isRecording: Bool { recordingMeetingID != nil }
+    var isRecording: Bool { lifecycle.phase.meetingID != nil }
+    /// macOS shows its permission prompts during this wait.
+    var isStartingRecording: Bool { lifecycle.phase.isStarting }
+    var isStoppingRecording: Bool { lifecycle.phase.isStopping }
+    var recordingMeetingID: UUID? { lifecycle.phase.meetingID }
 
     func launch() {
         do {
@@ -219,98 +221,150 @@ final class AppModel {
         return [MicRecorder(deviceID: picked?.id), SystemAudioRecorder(includeOutputDevice: tapIncludesOutput)]
     }
 
-    func toggleRecording() async {
-        if isRecording { await stopRecording() } else { await startRecording() }
+    func toggleRecording() {
+        send(isRecording ? .stop : .start(startTarget))
     }
 
-    func startFromPrompt(_ prompt: CallPrompt) async {
-        if isRecording {
-            guard prompt.replacesRecording else { return }
-            await stopRecording()
-        }
-        await startRecording(callApp: prompt.app, fromCall: prompt.key)
+    func startFromPrompt(_ prompt: CallPrompt) {
+        send(.start(.call(prompt)))
+    }
+
+    func stopRecording() {
+        send(.stop)
+    }
+
+    func pauseOrResume() {
+        send(lifecycle.phase.isPaused ? .resume : .pause)
+    }
+
+    func keepRecording() {
+        send(.resume)
     }
 
     /// The call app let go of the mic. Pause now, then stop after a short window to undo.
     func callEnded() {
-        guard isRecording, autoStop == nil else { return }
-        Task { await recorder?.pause() }
-        autoStopCountdown = 8
-        pill.show()
-        autoStop = Task { [weak self] in
-            for remaining in stride(from: 7, through: 0, by: -1) {
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled else { return }
-                self?.autoStopCountdown = remaining
+        send(.callEnded(atMs: nowMs))
+    }
+
+    func callResumed() {
+        send(.callResumed)
+    }
+
+    func tick() {
+        send(.tick(atMs: nowMs))
+    }
+
+    func quitRequested() {
+        send(.quitRequested)
+    }
+
+    /// A selected draft note is recorded into, not beside.
+    private var startTarget: StartTarget {
+        guard let selection, meetings.first(where: { $0.id == selection })?.state == .draft else { return .newMeeting }
+        return .draft(selection)
+    }
+
+    private var nowMs: Int64 {
+        Int64((ContinuousClock.now - launchedAt) / .milliseconds(1))
+    }
+
+    /// The gate is written before any command runs, so the pipeline holds model jobs back before
+    /// `recordingStarted()` looks for one to stop.
+    private func send(_ event: RecordingEvent) {
+        let commands = lifecycle.handle(event)
+        if let host, host.gate.isRecording != lifecycle.phase.holdsModels {
+            host.gate.set(lifecycle.phase.holdsModels)
+            if !lifecycle.phase.holdsModels { Task { await pipeline?.nudge() } }
+        }
+        autoStopCountdown = lifecycle.secondsUntilAutoStop(atMs: nowMs)
+        for command in commands { run(command) }
+    }
+
+    private func run(_ command: RecordingCommand) {
+        switch command {
+        case .startCapture(let target):
+            pill.show()
+            starting = Task { await openCapture(target) }
+        case .cancelStart:
+            starting?.cancel()
+        case .began(let active):
+            partials = [:]
+            selection = active.meetingID
+            showConsent = true
+            pill.show()
+            detector?.recordingStarted(fromCall: active.callKey)
+        case .pauseCapture:
+            Task { await recorder?.pause() }
+        case .resumeCapture:
+            Task {
+                do {
+                    try await recorder?.resume()
+                } catch {
+                    alert = AppAlert(.captureFailed)
+                    send(.resumeFailed)
+                }
             }
-            guard !Task.isCancelled else { return }
-            self?.autoStop = nil
-            self?.autoStopCountdown = nil
-            await self?.stopRecording()
+        case .stopCapture:
+            Task { await closeCapture() }
+        case .askToQuit:
+            Task { send(confirmQuit() ? .quitConfirmed : .quitCancelled) }
+        case .quit:
+            Task {
+                await pipeline?.stop()
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+        case .cancelQuit:
+            NSApp.reply(toApplicationShouldTerminate: false)
         }
     }
 
-    func keepRecording() {
-        autoStop?.cancel()
-        autoStop = nil
-        autoStopCountdown = nil
-        Task { try? await recorder?.resume() }
-    }
-
-    func startRecording(into existing: UUID? = nil, callApp: CallApp? = nil, fromCall key: String? = nil) async {
-        guard let recorder, !isRecording, !isStartingRecording else { return }
-        isStartingRecording = true
-        defer { isStartingRecording = false }
-        pill.show()
-        // The pipeline must see the flag before it is preempted, or it claims the same model job
-        // again while the capture is still starting.
-        host?.gate.set(true)
+    private func openCapture(_ target: StartTarget) async {
+        guard let recorder else { return send(.captureFailed) }
         await pipeline?.recordingStarted()
+        let existing: UUID?
+        let callApp: CallApp?
+        switch target {
+        case .newMeeting: (existing, callApp) = (nil, nil)
+        case .draft(let id): (existing, callApp) = (id, nil)
+        case .call(let prompt): (existing, callApp) = (nil, prompt.app)
+        }
         do {
             let (id, session) = try await recorder.start(existing: existing, callApp: callApp) { update in
                 Task { @MainActor [weak self] in self?.apply(update) }
             }
-            recordingMeetingID = id
-            partials = [:]
-            selection = id
             status = RecordingStatus()
-            showConsent = true
-            pill.show()
-            detector?.recordingStarted(fromCall: key)
             statusTask = Task { [weak self] in
                 for await status in session.status { self?.status = status }
             }
+            send(.captureOpened(meetingID: id))
         } catch {
             pill.hide()
-            host?.gate.set(false)
-            alert = (error as? RecordingError).map(AppAlert.init)
-                ?? AppAlert(title: "Couldn't start recording", message: "Something went wrong starting the recording.")
+            if !(error is CancellationError) {
+                alert = (error as? RecordingError).map(AppAlert.init)
+                    ?? AppAlert(title: "Couldn't start recording", message: "Something went wrong starting the recording.")
+            }
+            send(.captureFailed)
         }
     }
 
-    func pauseOrResume() async {
-        guard let recorder else { return }
-        if status.isPaused {
-            do { try await recorder.resume() } catch { alert = AppAlert(.captureFailed) }
-        } else {
-            await recorder.pause()
-        }
-    }
-
-    func stopRecording() async {
-        guard let recorder, isRecording else { return }
-        autoStop?.cancel()
-        autoStop = nil
-        autoStopCountdown = nil
+    private func closeCapture() async {
         detector?.recordingStopped()
         statusTask?.cancel()
         showConsent = false
         pill.hide()
-        let id = await recorder.stop()
-        host?.gate.set(false)
-        recordingMeetingID = nil
+        let id = await recorder?.stop()
         partials = [:]
         if let id { await pipeline?.meetingStopped(id) }
+        send(.stopFinished)
+    }
+
+    private func confirmQuit() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Stop and save the recording?"
+        alert.informativeText = "Honeycomb is recording a meeting. Quitting stops the recording and keeps what was captured."
+        alert.addButton(withTitle: "Stop and Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func apply(_ update: LiveUpdate) {
