@@ -78,6 +78,23 @@ struct MarkdownTests {
         ])
     }
 
+    @Test func codeKeepsItsBoldAndLink() {
+        let markdown = "**`x`** and [`y`](https://acme.com)"
+        #expect(Markdown.markdown(Markdown.document(markdown)) == markdown)
+    }
+
+    @Test func aHardBreakInAListItemRoundTrips() {
+        let paragraph = PMNode(type: "paragraph", content: [.text("a"), PMNode(type: "hardBreak"), .text("b")])
+        let doc = PMNode.doc([PMNode(type: "bulletList", content: [
+            PMNode(type: "listItem", attrs: ["blockId": .string("b1")], content: [paragraph]),
+        ])])
+        #expect(Markdown.document(Markdown.markdown(doc), newBlockID: ids()) == doc)
+    }
+
+    @Test func htmlExportKeepsTheListStart() {
+        #expect(NoteExport.html(Markdown.document("3. a\n4. b")) == "<ol start=\"3\"><li>a</li><li>b</li></ol>")
+    }
+
     @Test func documentJSONRoundTrips() throws {
         let doc = Markdown.document("## Hi\n\n- [x] done")
         let decoded = try #require(PMNode.decode(doc.encoded()))
