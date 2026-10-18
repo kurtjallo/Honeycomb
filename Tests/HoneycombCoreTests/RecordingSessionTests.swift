@@ -86,11 +86,85 @@ struct RecordingSessionTests {
         #expect(meta.status == .recovered)
     }
 
+    /// Dictionary order decides which track resumes first, so the failure is keyed on the overall start count.
+    @Test func failedResumeLeavesBothTracksPaused() async throws {
+        let starts = CountedStarts(failing: 4)
+        let session = RecordingSession(meetingID: UUID(), folder: folder, recorders: [
+            CountedRecorder(channel: .me, starts: starts),
+            CountedRecorder(channel: .them, starts: starts),
+        ])
+        try await session.start()
+        await session.pause()
+        await #expect(throws: RecorderError.self) { try await session.resume() }
+        #expect(await session.state == .paused)
+        #expect(starts.live == 0)
+        #expect(await session.currentMeta.pauses.last?.endMs == nil)
+
+        try await session.resume()
+        #expect(starts.live == 2)
+        await session.stop()
+        #expect(starts.live == 0)
+    }
+
     @Test func failingStartThrows() async throws {
         let broken = ReplayRecorder(channel: .me, generate: { _ in 0 })
         broken.failingStarts = 1
         let session = RecordingSession(meetingID: UUID(), folder: folder, recorders: [broken])
         await #expect(throws: RecorderError.self) { try await session.start() }
         #expect(await session.state == .stopped)
+    }
+}
+
+/// Shared by both tracks' recorders so a test can fail one start regardless of track order.
+private final class CountedStarts: @unchecked Sendable {
+    private let lock = NSLock()
+    private let failing: Int
+    private var count = 0
+    private var running = 0
+
+    init(failing: Int) {
+        self.failing = failing
+    }
+
+    var live: Int { lock.withLock { running } }
+
+    func start() throws {
+        try lock.withLock {
+            count += 1
+            if count == failing { throw RecorderError("counted start") }
+            running += 1
+        }
+    }
+
+    func stop() {
+        lock.withLock { running -= 1 }
+    }
+}
+
+/// Delivers no audio. Like the real recorders, a stop tears down only the latest capture.
+private final class CountedRecorder: TrackRecorder, @unchecked Sendable {
+    let channel: Channel
+    private let starts: CountedStarts
+    private let lock = NSLock()
+    private var captures = 0
+
+    init(channel: Channel, starts: CountedStarts) {
+        self.channel = channel
+        self.starts = starts
+    }
+
+    func start(into sink: AudioSink, onRouteChange: @escaping @Sendable () -> Void) throws -> Double {
+        try starts.start()
+        lock.withLock { captures += 1 }
+        return 48_000
+    }
+
+    func stop() {
+        let stopped = lock.withLock {
+            guard captures > 0 else { return false }
+            captures -= 1
+            return true
+        }
+        if stopped { starts.stop() }
     }
 }
