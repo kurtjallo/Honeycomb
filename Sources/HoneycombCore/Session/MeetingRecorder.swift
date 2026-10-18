@@ -19,8 +19,18 @@ public actor MeetingRecorder {
     private let freeBytes: @Sendable () -> Int64
     private let micAccess: @Sendable () async -> Bool
     private let host: ModelHost?
-    private var active: (meetingID: UUID, session: RecordingSession)?
+    private var phase = Phase.idle
     private var live: Task<Void, Never>?
+    /// The meeting whose live transcriber holds the speech models. A stop waits only for that one,
+    /// never for a model that is still loading.
+    private var liveMeeting: UUID?
+
+    private enum Phase {
+        case idle
+        case starting
+        case recording(meetingID: UUID, session: RecordingSession)
+        case stopping(Task<UUID, Never>)
+    }
 
     public init(database: AppDatabase, paths: Paths,
                 makeRecorders: @escaping @Sendable () -> [any TrackRecorder],
@@ -35,14 +45,24 @@ public actor MeetingRecorder {
         self.micAccess = micAccess
     }
 
-    public var activeSession: RecordingSession? { active?.session }
-    public var activeMeetingID: UUID? { active?.meetingID }
-
     /// Records into `existing` (a draft note made before the call) or a new meeting.
     /// `onLive` receives live transcript lines, on whatever task produces them.
     public func start(existing: UUID? = nil, title: String? = nil, callApp: CallApp? = nil, templateId: String? = nil,
                       onLive: (@Sendable (LiveUpdate) -> Void)? = nil) async throws -> (UUID, RecordingSession) {
-        guard active == nil else { throw RecordingError.alreadyRecording }
+        guard case .idle = phase else { throw RecordingError.alreadyRecording }
+        phase = .starting
+        do {
+            let (id, session) = try await open(existing: existing, title: title, callApp: callApp, templateId: templateId)
+            phase = .recording(meetingID: id, session: session)
+            startLiveTranscript(meeting: id, session: session, onLive: onLive)
+            return (id, session)
+        } catch {
+            phase = .idle
+            throw error
+        }
+    }
+
+    private func open(existing: UUID?, title: String?, callApp: CallApp?, templateId: String?) async throws -> (UUID, RecordingSession) {
         let free = freeBytes()
         guard free >= Self.minimumFreeBytes else { throw RecordingError.lowDisk(availableBytes: free) }
         guard await micAccess() else { throw RecordingError.micDenied }
@@ -70,8 +90,6 @@ public actor MeetingRecorder {
             try? database.setState(meeting.id, .failed, detail: "capture_failed")
             throw RecordingError.captureFailed
         }
-        active = (meeting.id, session)
-        startLiveTranscript(meeting: meeting.id, session: session, onLive: onLive)
         return (meeting.id, session)
     }
 
@@ -83,6 +101,10 @@ public actor MeetingRecorder {
         live = Task.detached(priority: .userInitiated) {
             guard let models = try? await host.acquireSpeech() else {
                 Log.info("live.unavailable", ["meeting": .id(meeting)])
+                return
+            }
+            guard await self.liveReady(meeting) else {
+                await host.releaseSpeech()
                 return
             }
             let transcriber = LiveTranscriber(engine: models.engine, detector: models.detector)
@@ -107,33 +129,55 @@ public actor MeetingRecorder {
         }
     }
 
+    /// False once the recording has stopped, so a model that finished loading late writes nothing.
+    private func liveReady(_ meeting: UUID) -> Bool {
+        guard case .recording(let id, _) = phase, id == meeting else { return false }
+        liveMeeting = meeting
+        return true
+    }
+
     public func pause() async {
-        guard let active else { return }
-        await active.session.pause()
-        try? database.setState(active.meetingID, .paused)
+        guard case .recording(let id, let session) = phase else { return }
+        await session.pause()
+        try? database.setState(id, .paused)
     }
 
     public func resume() async throws {
-        guard let active else { return }
-        try await active.session.resume()
-        try? database.setState(active.meetingID, .recording)
+        guard case .recording(let id, let session) = phase else { return }
+        try await session.resume()
+        try? database.setState(id, .recording)
     }
 
-    /// Stops capture and hands the meeting to the pipeline as `transcribing`.
+    /// Stops capture and hands the meeting to the pipeline as `transcribing`. A stop called while
+    /// another runs waits for it and returns the same meeting.
     @discardableResult
     public func stop() async -> UUID? {
-        guard let active else { return nil }
-        self.active = nil
-        let meta = await active.session.stop()
-        await live?.value
-        live = nil
-        if var meeting = try? database.meeting(active.meetingID) {
+        switch phase {
+        case .idle, .starting:
+            return nil
+        case .stopping(let task):
+            return await task.value
+        case .recording(let id, let session):
+            let task = Task { await finishStop(id, session) }
+            phase = .stopping(task)
+            return await task.value
+        }
+    }
+
+    private func finishStop(_ id: UUID, _ session: RecordingSession) async -> UUID {
+        let live = self.live
+        self.live = nil
+        let meta = await session.stop()
+        if liveMeeting == id { await live?.value }
+        liveMeeting = nil
+        if var meeting = try? database.meeting(id) {
             meeting.state = .transcribing
             meeting.endAt = Date()
             meeting.durationMs = meta.durationMs
             try? database.save(meeting)
         }
-        return active.meetingID
+        phase = .idle
+        return id
     }
 }
 
