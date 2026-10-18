@@ -52,8 +52,8 @@ public final class MicUsageMonitor: @unchecked Sendable {
     }
 }
 
-/// Reads a browser's front window title through Accessibility, only when that browser starts
-/// using the mic, to tell a Meet call from dictation or a voice chat.
+/// Reads a browser's window titles through Accessibility, only when that browser starts using
+/// the mic, to tell a Meet call from dictation or a voice chat.
 public enum BrowserTitles {
     public static var isTrusted: Bool { AXIsProcessTrusted() }
 
@@ -64,17 +64,17 @@ public enum BrowserTitles {
         return AXIsProcessTrustedWithOptions(options)
     }
 
-    public static func frontWindowTitle(bundleID: String) -> String? {
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { return nil }
+    public static func windowTitles(bundleID: String) -> [String] {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else { return [] }
         let element = AXUIElementCreateApplication(app.processIdentifier)
-        var window: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &window) == .success,
-              let window, CFGetTypeID(window) == AXUIElementGetTypeID()
-        else { return nil }
-        var title: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &title) == .success else {
-            return nil
+        var windows: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &windows) == .success,
+              let windows = windows as? [AXUIElement]
+        else { return [] }
+        return windows.compactMap { window in
+            var title: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title) == .success else { return nil }
+            return title as? String
         }
-        return title as? String
     }
 }

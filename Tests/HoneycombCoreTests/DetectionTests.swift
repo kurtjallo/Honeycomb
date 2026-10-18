@@ -14,6 +14,22 @@ struct DetectionTests {
         return commands
     }
 
+    /// Answers every title read with `titles` right away, as the app does.
+    mutating func ticks(_ from: Int64, _ to: Int64, answering titles: [String]) -> [DetectionCommand] {
+        var commands: [DetectionCommand] = []
+        var now = from
+        while now <= to {
+            for command in machine.handle(.tick(atMs: now)) {
+                commands.append(command)
+                if case .readTitle(let key, _) = command {
+                    commands += machine.handle(.titleRead(key: key, titles: titles))
+                }
+            }
+            now += 500
+        }
+        return commands
+    }
+
     func shown(_ commands: [DetectionCommand]) -> [CallPrompt] {
         commands.compactMap { if case .show(let prompt) = $0 { prompt } else { nil } }
     }
@@ -41,7 +57,14 @@ struct DetectionTests {
     @Test mutating func browserHelperReadsTheTabTitle() {
         _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome.helper", atMs: 0))
         #expect(ticks(0, 3_000) == [.readTitle(key: "1", bundleID: "com.google.Chrome")])
-        let prompts = shown(machine.handle(.titleRead(key: "1", title: "Meet - abc-defg-hij")))
+        let prompts = shown(machine.handle(.titleRead(key: "1", titles: ["Meet - abc-defg-hij"])))
+        #expect(prompts.map(\.kind) == [.site("Google Meet")])
+    }
+
+    @Test mutating func aMeetingInAWindowBehindTheFocusedOnePrompts() {
+        _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
+        _ = ticks(0, 3_000)
+        let prompts = shown(machine.handle(.titleRead(key: "1", titles: ["Inbox", "Meet - abc-defg-hij"])))
         #expect(prompts.map(\.kind) == [.site("Google Meet")])
     }
 
@@ -52,17 +75,18 @@ struct DetectionTests {
 
     @Test mutating func chatGPTVoiceInABrowserIsQuiet() {
         _ = machine.handle(.micStarted(key: "1", bundleID: "company.thebrowser.Browser", atMs: 0))
-        _ = ticks(0, 3_000)
-        #expect(machine.handle(.titleRead(key: "1", title: "ChatGPT")).isEmpty)
-        #expect(ticks(3_500, 60_000).isEmpty)
+        let commands = ticks(0, 62_500, answering: ["ChatGPT"])
+        #expect(shown(commands).isEmpty)
+        #expect(commands.count == 30, "one read at 3 s, then one every 2 s through 61 s")
+        #expect(ticks(63_000, 200_000, answering: ["Meet - abc-defg-hij"]).isEmpty, "gave up a minute after the first read")
     }
 
     @Test mutating func aMeetingTabOpenedAfterTheMicStartsStillPrompts() {
         _ = machine.handle(.micStarted(key: "1", bundleID: "com.google.Chrome", atMs: 0))
         _ = ticks(0, 3_000)
-        _ = machine.handle(.titleRead(key: "1", title: "New Tab"))
+        _ = machine.handle(.titleRead(key: "1", titles: ["New Tab"]))
         #expect(ticks(3_500, 5_000) == [.readTitle(key: "1", bundleID: "com.google.Chrome")])
-        let prompts = shown(machine.handle(.titleRead(key: "1", title: "Meet - abc-defg-hij")))
+        let prompts = shown(machine.handle(.titleRead(key: "1", titles: ["Meet - abc-defg-hij"])))
         #expect(prompts.map(\.kind) == [.site("Google Meet")])
     }
 

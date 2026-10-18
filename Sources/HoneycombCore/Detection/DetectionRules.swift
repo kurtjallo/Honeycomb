@@ -4,6 +4,11 @@ public struct DetectionPolicy: Sendable, Equatable {
     public var askAfterMs: Int64 = 3_000
     /// After the recorded app lets go of the mic, wait this long before calling the call ended.
     public var endAfterMs: Int64 = 5_000
+    /// While no browser window title shows a meeting, read the titles again this often. The meeting
+    /// tab may still be loading, or in a window the user is not looking at yet.
+    public var titleRetryMs: Int64 = 2_000
+    /// Stop reading titles this long after the first read, and stay quiet for that mic use.
+    public var titleGiveUpAfterMs: Int64 = 60_000
 
     public init() {}
 }
@@ -36,7 +41,8 @@ public struct CallPrompt: Sendable, Equatable {
 public enum DetectionEvent: Sendable, Equatable {
     case micStarted(key: String, bundleID: String, atMs: Int64)
     case micStopped(key: String, atMs: Int64)
-    case titleRead(key: String, title: String?)
+    /// Every window title the browser has open. Empty when Accessibility could not read them.
+    case titleRead(key: String, titles: [String])
     case tick(atMs: Int64)
     case startNotes(key: String)
     case notNow(key: String)
@@ -62,7 +68,10 @@ public enum DetectionCommand: Sendable, Equatable {
 public struct DetectionMachine: Sendable {
     enum Phase: Sendable, Equatable {
         case waiting(sinceMs: Int64)
-        case readingTitle
+        /// A title read is out. `sinceMs` is when the first read for this mic use went out.
+        case readingTitle(sinceMs: Int64, readMs: Int64)
+        /// No window title showed a meeting at the read sent at `readMs`.
+        case titleUnmatched(sinceMs: Int64, readMs: Int64)
         case prompted
         case quiet
         case recording
@@ -134,10 +143,12 @@ public struct DetectionMachine: Sendable {
             }
             return commands
 
-        case .titleRead(let key, let title):
-            guard var activation = activations[key], activation.phase == .readingTitle else { return [] }
-            guard let site = MeetingSites.match(title) else {
-                activation.phase = .quiet
+        case .titleRead(let key, let titles):
+            guard var activation = activations[key], case .readingTitle(let since, let read) = activation.phase else {
+                return []
+            }
+            guard let site = titles.lazy.compactMap({ MeetingSites.match($0) }).first else {
+                activation.phase = .titleUnmatched(sinceMs: since, readMs: read)
                 activations[key] = activation
                 return []
             }
@@ -153,20 +164,31 @@ public struct DetectionMachine: Sendable {
                 commands.append(.callEnded)
             }
             for (key, activation) in activations {
-                guard case .waiting(let since) = activation.phase, now - since >= policy.askAfterMs else { continue }
                 var next = activation
-                switch activation.app.kind {
-                case .app:
-                    next.kind = .app(activation.app.name)
-                    next.phase = .prompted
-                    commands.append(.show(prompt(key, next)))
-                case .browser where accessibilityTrusted:
-                    next.phase = .readingTitle
-                    commands.append(.readTitle(key: key, bundleID: activation.app.bundleId))
-                case .browser:
-                    next.kind = .browser(activation.app.name)
-                    next.phase = .prompted
-                    commands.append(.show(prompt(key, next)))
+                switch activation.phase {
+                case .waiting(let since) where now - since >= policy.askAfterMs:
+                    switch activation.app.kind {
+                    case .app:
+                        next.kind = .app(activation.app.name)
+                        next.phase = .prompted
+                        commands.append(.show(prompt(key, next)))
+                    case .browser where accessibilityTrusted:
+                        next.phase = .readingTitle(sinceMs: now, readMs: now)
+                        commands.append(.readTitle(key: key, bundleID: activation.app.bundleId))
+                    case .browser:
+                        next.kind = .browser(activation.app.name)
+                        next.phase = .prompted
+                        commands.append(.show(prompt(key, next)))
+                    }
+                case .titleUnmatched(let since, let read) where now - read >= policy.titleRetryMs:
+                    if now - since >= policy.titleGiveUpAfterMs {
+                        next.phase = .quiet
+                    } else {
+                        next.phase = .readingTitle(sinceMs: since, readMs: now)
+                        commands.append(.readTitle(key: key, bundleID: activation.app.bundleId))
+                    }
+                default:
+                    continue
                 }
                 activations[key] = next
             }
@@ -210,7 +232,7 @@ public struct DetectionMachine: Sendable {
     }
 }
 
-/// Recognizes a web meeting from the browser's front window title.
+/// Recognizes a web meeting from a browser window title, which is the title of the window's active tab.
 public enum MeetingSites {
     public static func match(_ title: String?) -> String? {
         guard let title else { return nil }

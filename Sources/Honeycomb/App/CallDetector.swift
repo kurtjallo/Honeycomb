@@ -66,8 +66,8 @@ final class CallDetector {
         for command in commands {
             switch command {
             case .readTitle(let key, let bundleID):
-                let title = BrowserTitles.frontWindowTitle(bundleID: bundleID)
-                run(machine.handle(.titleRead(key: key, title: title)))
+                let titles = BrowserTitles.windowTitles(bundleID: bundleID)
+                run(machine.handle(.titleRead(key: key, titles: titles)))
             case .show(let prompt):
                 prompts.show(prompt) { [weak self] start in
                     guard let self else { return }
