@@ -80,9 +80,12 @@ private struct ChatBody: Encodable, Sendable {
     init(_ request: ChatRequest, isOpenAI: Bool) {
         model = request.model
         messages = request.messages
-        if Self.isReasoningModel(request.model) {
-            maxCompletionTokens = request.maxTokens + Self.reasoningTokens
-            reasoningEffort = "low"
+        let name = request.model.split(separator: "/").last.map { $0.lowercased() } ?? ""
+        if Self.isReasoningFamily(name) {
+            // Chat variants such as gpt-5-chat-latest don't reason and may refuse reasoning_effort.
+            let reasons = !name.contains("-chat")
+            maxCompletionTokens = request.maxTokens + (reasons ? Self.reasoningTokens : 0)
+            reasoningEffort = reasons ? "low" : nil
         } else if isOpenAI {
             maxCompletionTokens = request.maxTokens
             temperature = request.temperature
@@ -92,10 +95,9 @@ private struct ChatBody: Encodable, Sendable {
         }
     }
 
-    /// Gateways may prefix the vendor, as in OpenRouter's `openai/gpt-5`.
-    static func isReasoningModel(_ model: String) -> Bool {
-        let name = model.split(separator: "/").last.map { $0.lowercased() } ?? ""
-        return name.hasPrefix("gpt-5") || (name.first == "o" && name.dropFirst().first?.isNumber == true)
+    /// `name` has any vendor prefix removed, such as OpenRouter's `openai/` in `openai/gpt-5`.
+    static func isReasoningFamily(_ name: String) -> Bool {
+        name.hasPrefix("gpt-5") || (name.first == "o" && name.dropFirst().first?.isNumber == true)
     }
 }
 
