@@ -262,6 +262,23 @@ struct NoteWriterTests {
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == note.id)
     }
 
+    @Test func aTitleOnlyAnswerCutOffAtItsLimitFailsAndKeepsTheEarlierNotes() async throws {
+        guard case .written(let good) = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) else {
+            Issue.record("not written")
+            return
+        }
+        await #expect(throws: ProviderError.truncated) {
+            _ = try await writer(FakeChat(chunks: ["# Acme renewal"], finish: .length)).write(meeting.id)
+        }
+        #expect(try database.meeting(meeting.id)?.currentEnhancedId == good)
+        #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
+    }
+
+    @Test func anEmptyAnswerFails() async throws {
+        await #expect(throws: ProviderError.truncated) { _ = try await writer(FakeChat(chunks: [])).write(meeting.id) }
+        #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
+    }
+
     @Test func aModelThatIsNotReadyAddsNoVersion() async throws {
         let versionsWhenAsked = Recorded<Int>()
         let provider = ScriptedChat { [database, meeting] _, _ in
@@ -330,6 +347,18 @@ struct NoteWriterTests {
         let prompt = try #require(await prompts.values.last)
         #expect(prompt.contains("- [00:05] A point"))
         #expect(!prompt.contains("</think>"))
+    }
+
+    @Test func aPartSummaryCutOffBeforeAnyTextFails() async throws {
+        try longCall(minutes: 30)
+        let provider = ScriptedChat { request, continuation in
+            if request.messages.first?.content == NotesPrompt.partSystem {
+                continuation.answer("", .length)
+            } else {
+                continuation.answer("# T\n\n- a")
+            }
+        }
+        await #expect(throws: ProviderError.truncated) { _ = try await writer(provider, context: 8_192).write(meeting.id) }
     }
 
     @Test func summariesThatNeverShrinkStopAsTooLong() async throws {
