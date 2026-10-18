@@ -154,6 +154,30 @@ struct CaptureHealthTests {
         #expect(machine.finalStatus(stoppedAtMs: now + 5_100) == .recovered)
     }
 
+    /// A restart ends the old capture, and its last drained writes reach the machine after the restart.
+    @Test mutating func writesDrainedBeforeARestartDoNotEndTheStartupGrace() {
+        _ = machine.handle(.started(atMs: 0))
+        _ = write(from: 100, to: 1_000)
+        #expect(tick(from: 1_000, to: 3_900).last == .restart(attempt: 1))
+        _ = machine.handle(.restartSucceeded(atMs: 3_920))
+        #expect(machine.handle(.wrote(atMs: 3_910, silent: false)).isEmpty)
+        #expect(tick(from: 3_950, to: 8_850).isEmpty)
+    }
+
+    @Test mutating func writesDrainedBeforeAFailedRestartDoNotReportLostTwice() {
+        _ = machine.handle(.started(atMs: 0))
+        _ = write(from: 100, to: 1_000)
+        _ = tick(from: 1_000, to: 3_900)
+        _ = machine.handle(.restartFailed(atMs: 3_950))
+        _ = tick(from: 4_000, to: 4_450)
+        _ = machine.handle(.restartFailed(atMs: 4_500))
+        _ = tick(from: 4_550, to: 6_500)
+        #expect(machine.handle(.restartFailed(atMs: 6_600)) == [.captureLost(atMs: 6_600)])
+        #expect(machine.handle(.wrote(atMs: 6_590, silent: false)).isEmpty)
+        #expect(tick(from: 6_600, to: 16_550).isEmpty)
+        #expect(machine.health == .lost)
+    }
+
     @Test mutating func silenceOnlyWarns() {
         _ = machine.handle(.started(atMs: 0))
         let silent = write(from: 100, to: 16_200, silent: true)
