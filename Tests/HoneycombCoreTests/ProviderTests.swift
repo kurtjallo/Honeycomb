@@ -118,6 +118,14 @@ private struct StreamChat: ChatProvider {
         #expect(ProviderError(code: code)?.code == code, "a stored code reads back")
     }
 
+    @Test("a gateway timeout that says \"too long\" is a transient server error, and a 400 that says it is a too-long prompt")
+    func tooLongNeedsAClientError() {
+        let gateway = ProviderError.from(status: 504, retryAfter: nil, body: "The upstream server took too long to respond.")
+        #expect(gateway == .server(status: 504))
+        #expect(ProviderError.from(status: 400, retryAfter: nil, body: "Prompt is too long: 210000 tokens > 200000 maximum") == .contextTooLong)
+        #expect(ProviderError.from(status: 500, retryAfter: nil, body: "context_length_exceeded") == .contextTooLong)
+    }
+
     @Test("an error object in a stream maps the same way as a failed response")
     func wireErrors() throws {
         let quota = try JSONDecoder().decode(ProviderWireError.self, from: Data(
