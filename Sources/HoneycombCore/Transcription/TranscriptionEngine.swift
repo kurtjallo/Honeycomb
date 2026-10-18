@@ -30,6 +30,12 @@ public protocol TranscriptionEngine: Sendable {
     func release() async
 }
 
+/// Finds where speech starts and stops in a whole recording, in milliseconds.
+/// `VoiceDetector` implements it, and tests use a fake.
+public protocol SpeechRangeDetector: Sendable {
+    func speechRanges(_ samples: [Float]) async throws -> [(startMs: Int64, endMs: Int64)]
+}
+
 /// One transcript line on the session clock.
 public struct TranscriptLine: Sendable, Equatable, Identifiable {
     public var id: String { "\(channel.rawValue)-\(startMs)" }

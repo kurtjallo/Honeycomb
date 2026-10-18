@@ -61,8 +61,9 @@ public actor ParakeetEngine: TranscriptionEngine {
 }
 
 /// Silero voice detection on the Neural Engine. Finds where speech starts and stops.
-public actor VoiceDetector {
+public actor VoiceDetector: SpeechRangeDetector {
     public static let frameSize = VadManager.chunkSize
+    static let maxSpeechSeconds: Double = 14
     private let manager: VadManager
 
     public init(folder: URL) throws {
@@ -85,9 +86,9 @@ public actor VoiceDetector {
     }
 
     /// Speech ranges in a whole recording, in milliseconds.
-    public func speechRanges(_ samples: [Float], maxSpeechSeconds: Double = 14) async throws -> [(startMs: Int64, endMs: Int64)] {
+    public func speechRanges(_ samples: [Float]) async throws -> [(startMs: Int64, endMs: Int64)] {
         var config = VadSegmentationConfig.default
-        config.maxSpeechDuration = maxSpeechSeconds
+        config.maxSpeechDuration = Self.maxSpeechSeconds
         config.speechPadding = 0.2
         let segments = try await manager.segmentSpeech(samples, config: config)
         return segments.map { (Int64($0.startTime * 1000), Int64($0.endTime * 1000)) }

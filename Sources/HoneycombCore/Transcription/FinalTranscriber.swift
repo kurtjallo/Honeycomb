@@ -4,9 +4,9 @@ import Foundation
 /// live view skipped and gives better line breaks from word timings.
 public struct FinalTranscriber: Sendable {
     let engine: any TranscriptionEngine
-    let detector: VoiceDetector
+    let detector: any SpeechRangeDetector
 
-    public init(engine: any TranscriptionEngine, detector: VoiceDetector) {
+    public init(engine: any TranscriptionEngine, detector: any SpeechRangeDetector) {
         self.engine = engine
         self.detector = detector
     }
