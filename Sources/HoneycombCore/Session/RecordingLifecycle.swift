@@ -4,6 +4,9 @@ public struct RecordingPolicy: Sendable, Equatable {
     /// After the call app lets go of the mic, the recording pauses, then stops this long after
     /// unless the user or the call resumes it.
     public var autoStopAfterMs: Int64 = 8_000
+    /// Once the user commits to quitting, the app exits this long after, even if a start, a stop,
+    /// or saving the notes hangs.
+    public var quitDeadlineMs: Int64 = 4_000
 
     public init() {}
 }
@@ -27,16 +30,16 @@ public enum RecordingPhase: Sendable, Equatable {
     public enum AfterStop: Sendable, Equatable {
         case nothing
         case start(StartTarget)
-        case quit
+        case quit(byMs: Int64)
     }
 
     case idle
-    case starting(StartTarget, quitWhenOpen: Bool)
+    case starting(StartTarget, quitByMs: Int64?)
     case recording(ActiveRecording)
     case paused(ActiveRecording)
     case autoStopping(ActiveRecording, stopAtMs: Int64, userPaused: Bool)
     case stopping(ActiveRecording, then: AfterStop)
-    case quitting
+    case quitting(byMs: Int64)
 
     var capturing: ActiveRecording? {
         switch self {
@@ -52,6 +55,14 @@ public enum RecordingPhase: Sendable, Equatable {
 
     /// `.quitting` holds them so that clearing the gate on the way out never wakes the pipeline
     /// into a model load the exit can't interrupt.
+    var quitByMs: Int64? {
+        switch self {
+        case .starting(_, let by): by
+        case .stopping(_, .quit(let by)), .quitting(let by): by
+        default: nil
+        }
+    }
+
     public var holdsModels: Bool {
         switch self {
         case .idle: false
@@ -80,9 +91,9 @@ public enum RecordingEvent: Sendable, Equatable {
     case stop
     case pause
     case resume
-    case quitConfirmed
+    case quitConfirmed(atMs: Int64)
     case quitCancelled
-    case quitRequested
+    case quitRequested(atMs: Int64)
     case callEnded(atMs: Int64)
     case callResumed
     case tick(atMs: Int64)
@@ -101,6 +112,8 @@ public enum RecordingCommand: Sendable, Equatable {
     case stopCapture
     case askToQuit
     case quit
+    /// The quit deadline passed: exit now, whatever still hangs.
+    case quitNow
     case cancelQuit
     case alert(RecordingError)
 }
@@ -119,11 +132,15 @@ public struct RecordingLifecycle: Sendable {
     }
 
     public mutating func handle(_ event: RecordingEvent) -> [RecordingCommand] {
+        if let by = phase.quitByMs, case .tick(let now) = event, now >= by {
+            phase = .quitting(byMs: by)
+            return [.quitNow]
+        }
         if case .quitting = phase { return [] }
         switch event {
         case .start(let target):
             if case .idle = phase {
-                phase = .starting(target, quitWhenOpen: false)
+                phase = .starting(target, quitByMs: nil)
                 return [.startCapture(target)]
             }
             guard case .call(let prompt) = target else { return [] }
@@ -178,19 +195,19 @@ public struct RecordingLifecycle: Sendable {
             return [.stopCapture]
 
         case .captureOpened(let meetingID):
-            guard case .starting(let target, let quitWhenOpen) = phase else { return [] }
+            guard case .starting(let target, let quitBy) = phase else { return [] }
             let active = ActiveRecording(meetingID: meetingID, callKey: target.callKey)
-            if quitWhenOpen {
-                phase = .stopping(active, then: .quit)
+            if let quitBy {
+                phase = .stopping(active, then: .quit(byMs: quitBy))
                 return [.stopCapture]
             }
             phase = .recording(active)
             return [.began(active)]
 
         case .captureFailed(let error):
-            guard case .starting(_, let quitWhenOpen) = phase else { return [] }
-            phase = quitWhenOpen ? .quitting : .idle
-            return (error.map { [.alert($0)] } ?? []) + (quitWhenOpen ? [.quit] : [])
+            guard case .starting(_, let quitBy) = phase else { return [] }
+            phase = quitBy.map { .quitting(byMs: $0) } ?? .idle
+            return (error.map { [.alert($0)] } ?? []) + (quitBy != nil ? [.quit] : [])
 
         case .resumeFailed:
             guard case .recording(let active) = phase else { return [] }
@@ -204,39 +221,43 @@ public struct RecordingLifecycle: Sendable {
                 phase = .idle
                 return []
             case .start(let target):
-                phase = .starting(target, quitWhenOpen: false)
+                phase = .starting(target, quitByMs: nil)
                 return [.startCapture(target)]
-            case .quit:
-                phase = .quitting
+            case .quit(let by):
+                phase = .quitting(byMs: by)
                 return [.quit]
             }
 
-        case .quitRequested:
+        case .quitRequested(let now):
+            guard phase.quitByMs == nil else { return [] }
+            let by = now + policy.quitDeadlineMs
             switch phase {
             case .idle:
-                phase = .quitting
+                phase = .quitting(byMs: by)
                 return [.quit]
             case .stopping(let active, _):
-                phase = .stopping(active, then: .quit)
+                phase = .stopping(active, then: .quit(byMs: by))
                 return []
             default:
                 return [.askToQuit]
             }
 
-        case .quitConfirmed:
+        case .quitConfirmed(let now):
+            guard phase.quitByMs == nil else { return [] }
+            let by = now + policy.quitDeadlineMs
             switch phase {
             case .idle:
-                phase = .quitting
+                phase = .quitting(byMs: by)
                 return [.quit]
             case .starting(let target, _):
-                phase = .starting(target, quitWhenOpen: true)
+                phase = .starting(target, quitByMs: by)
                 return [.cancelStart]
             case .stopping(let active, _):
-                phase = .stopping(active, then: .quit)
+                phase = .stopping(active, then: .quit(byMs: by))
                 return []
             default:
                 guard let active = phase.capturing else { return [] }
-                phase = .stopping(active, then: .quit)
+                phase = .stopping(active, then: .quit(byMs: by))
                 return [.stopCapture]
             }
 

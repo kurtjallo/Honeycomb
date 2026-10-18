@@ -259,7 +259,7 @@ final class AppModel {
     }
 
     func quitRequested() {
-        send(.quitRequested)
+        send(.quitRequested(atMs: nowMs))
     }
 
     private var startTarget: StartTarget {
@@ -308,13 +308,15 @@ final class AppModel {
         case .stopCapture:
             Task { await closeCapture() }
         case .askToQuit:
-            Task { send(confirmQuit() ? .quitConfirmed : .quitCancelled) }
+            Task { send(confirmQuit() ? .quitConfirmed(atMs: nowMs) : .quitCancelled) }
         case .quit:
             Task {
                 await EditorHost.shared.flush()
                 await pipeline?.stop()
                 NSApp.reply(toApplicationShouldTerminate: true)
             }
+        case .quitNow:
+            NSApp.reply(toApplicationShouldTerminate: true)
         case .cancelQuit:
             NSApp.reply(toApplicationShouldTerminate: false)
         case .alert(let error):

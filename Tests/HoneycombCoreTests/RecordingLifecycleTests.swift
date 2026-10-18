@@ -130,37 +130,37 @@ struct RecordingLifecycleTests {
     }
 
     @Test mutating func quitWhileIdleQuitsAtOnce() {
-        #expect(lifecycle.handle(.quitRequested) == [.quit])
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.quit])
         #expect(lifecycle.handle(.start(.newMeeting)).isEmpty, "nothing starts once the app is quitting")
     }
 
     @Test mutating func quitWhileRecordingAsksThenStopsFirst() {
         recording()
-        #expect(lifecycle.handle(.quitRequested) == [.askToQuit])
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
         #expect(lifecycle.handle(.quitCancelled) == [.cancelQuit])
-        #expect(lifecycle.handle(.quitRequested) == [.askToQuit])
-        #expect(lifecycle.handle(.quitConfirmed) == [.stopCapture])
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
+        #expect(lifecycle.handle(.quitConfirmed(atMs: 0)) == [.stopCapture])
         #expect(lifecycle.handle(.stopFinished) == [.quit])
     }
 
     @Test mutating func quitWhilePausedOrCountingDownAsks() {
         recording()
         _ = lifecycle.handle(.pause)
-        #expect(lifecycle.handle(.quitRequested) == [.askToQuit])
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
         _ = lifecycle.handle(.callEnded(atMs: 0))
-        #expect(lifecycle.handle(.quitRequested) == [.askToQuit])
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
     }
 
     @Test mutating func quitWhileStartingCancelsTheStart() {
         _ = lifecycle.handle(.start(.newMeeting))
-        #expect(lifecycle.handle(.quitRequested) == [.askToQuit])
-        #expect(lifecycle.handle(.quitConfirmed) == [.cancelStart])
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)) == [.askToQuit])
+        #expect(lifecycle.handle(.quitConfirmed(atMs: 0)) == [.cancelStart])
         #expect(lifecycle.handle(.captureFailed(nil)) == [.quit], "a cancelled start shows no alert")
     }
 
     @Test mutating func quitWhileStartingStopsACaptureThatOpenedAnyway() {
         _ = lifecycle.handle(.start(.newMeeting))
-        _ = lifecycle.handle(.quitConfirmed)
+        _ = lifecycle.handle(.quitConfirmed(atMs: 0))
         #expect(lifecycle.handle(.captureOpened(meetingID: meeting)) == [.stopCapture])
         #expect(lifecycle.handle(.stopFinished) == [.quit])
     }
@@ -168,38 +168,44 @@ struct RecordingLifecycleTests {
     @Test mutating func quitWhileStoppingWaitsForTheStop() {
         recording()
         _ = lifecycle.handle(.stop)
-        #expect(lifecycle.handle(.quitRequested).isEmpty)
+        #expect(lifecycle.handle(.quitRequested(atMs: 0)).isEmpty)
         #expect(lifecycle.handle(.stopFinished) == [.quit])
     }
 
     @Test func theModelsStayHeldFromTheStopUntilTheAppExits() {
         let meeting = UUID()
         let paths: [[RecordingEvent]] = [
-            [.start(.newMeeting), .captureOpened(meetingID: meeting), .quitConfirmed, .stopFinished],
-            [.start(.newMeeting), .quitConfirmed, .captureFailed(nil)],
-            [.start(.newMeeting), .quitConfirmed, .captureOpened(meetingID: meeting), .stopFinished],
-            [.start(.newMeeting), .captureOpened(meetingID: meeting), .stop, .quitRequested, .stopFinished],
-            [.quitRequested],
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .quitConfirmed(atMs: 0), .stopFinished],
+            [.start(.newMeeting), .quitConfirmed(atMs: 0), .captureFailed(nil)],
+            [.start(.newMeeting), .quitConfirmed(atMs: 0), .captureOpened(meetingID: meeting), .stopFinished],
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .stop, .quitRequested(atMs: 0), .stopFinished],
+            [.quitRequested(atMs: 0)],
         ]
         for events in paths {
             var lifecycle = RecordingLifecycle()
             for event in events { _ = lifecycle.handle(event) }
-            #expect(lifecycle.phase == .quitting)
+            #expect(lifecycle.phase == .quitting(byMs: RecordingPolicy().quitDeadlineMs))
             #expect(lifecycle.phase.holdsModels, "no model job starts while the app quits: \(events)")
         }
     }
 
-    @Test func aQuitEndsWhateverStillHangs() {
+    @Test func aQuitEndsByTheDeadlineWhateverStillHangs() {
         let meeting = UUID()
+        let deadline = 1_000 + RecordingPolicy().quitDeadlineMs
         let hangs: [[RecordingEvent]] = [
-            [.start(.newMeeting), .quitConfirmed],
-            [.start(.newMeeting), .captureOpened(meetingID: meeting), .quitConfirmed],
-            [.quitRequested],
+            [.start(.newMeeting), .quitConfirmed(atMs: 1_000)],
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .quitConfirmed(atMs: 1_000)],
+            [.start(.newMeeting), .captureOpened(meetingID: meeting), .stop, .quitRequested(atMs: 1_000)],
+            [.quitRequested(atMs: 1_000)],
+            [.start(.newMeeting), .quitConfirmed(atMs: 1_000), .captureFailed(nil)],
         ]
         for events in hangs {
             var lifecycle = RecordingLifecycle()
             for event in events { _ = lifecycle.handle(event) }
-            #expect(!lifecycle.handle(.tick(atMs: 600_000)).isEmpty, "the app exits even though \(events) never finished")
+            #expect(lifecycle.handle(.quitRequested(atMs: 3_000)).isEmpty, "a second Quit doesn't move the deadline")
+            #expect(lifecycle.handle(.tick(atMs: deadline - 1)).isEmpty)
+            #expect(lifecycle.handle(.tick(atMs: deadline)) == [.quitNow], "the app exits even though \(events) never finished")
+            #expect(lifecycle.phase == .quitting(byMs: deadline))
         }
     }
 
