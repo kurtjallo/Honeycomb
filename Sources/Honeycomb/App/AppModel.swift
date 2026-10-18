@@ -437,8 +437,17 @@ final class AppModel {
         return nil
     }
 
+    /// The meeting waiting on the Delete confirmation.
+    var meetingToDelete: Meeting?
+
+    /// A meeting the recorder or the pipeline is still working on keeps its audio and rows.
+    func canDelete(_ meeting: Meeting) -> Bool {
+        let state = meetings.first { $0.id == meeting.id }?.state ?? meeting.state
+        return meeting.id != recordingMeetingID && ![.recording, .paused, .transcribing, .writingNotes].contains(state)
+    }
+
     func delete(_ meeting: Meeting) {
-        guard meeting.id != recordingMeetingID else { return }
+        guard canDelete(meeting) else { return }
         try? database?.deleteMeeting(meeting.id)
         try? FileManager.default.removeItem(at: paths.audioFolder(for: meeting.id))
         if selection == meeting.id { selection = nil }
