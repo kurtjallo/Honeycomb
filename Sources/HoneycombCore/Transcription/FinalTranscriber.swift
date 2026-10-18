@@ -37,25 +37,39 @@ public struct FinalTranscriber: Sendable {
 }
 
 /// On laptop speakers, the mic also hears the other side, so their words show up twice.
-/// A "Me" line that overlaps a "Them" line in time and mostly repeats its words is marked duplicate.
+/// A "Me" line near a "Them" line is marked duplicate when nearly all its words appear in theirs,
+/// in the same order. A real reply often repeats a few of their words ("Yes, ship on Friday.").
 public enum Dedupe {
     public static func duplicateMeLines(_ lines: [TranscriptLine], windowMs: Int64 = 1_500,
-                                        threshold: Double = 0.6) -> Set<Int> {
+                                        threshold: Double = 0.8) -> Set<Int> {
         let them = lines.filter { $0.channel == .them }
         var duplicates = Set<Int>()
         for (index, line) in lines.enumerated() where line.channel == .me {
-            let words = wordSet(line.text)
-            guard words.count >= 2 else { continue }
-            let nearby = them.filter { $0.startMs <= line.endMs + windowMs && $0.endMs >= line.startMs - windowMs }
-            let heard = nearby.reduce(into: Set<String>()) { $0.formUnion(wordSet($1.text)) }
-            let shared = Double(words.intersection(heard).count) / Double(words.count)
+            let mine = words(line.text)
+            guard mine.count >= 2 else { continue }
+            let heard = them.filter { $0.startMs <= line.endMs + windowMs && $0.endMs >= line.startMs - windowMs }
+                .flatMap { words($0.text) }
+            let shared = Double(commonInOrder(mine, heard)) / Double(mine.count)
             if shared >= threshold { duplicates.insert(index) }
         }
         return duplicates
     }
 
-    static func wordSet(_ text: String) -> Set<String> {
-        Set(text.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init))
+    static func words(_ text: String) -> [String] {
+        text.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
+    }
+
+    /// The longest run of words both share in the same order, gaps allowed.
+    static func commonInOrder(_ a: [String], _ b: [String]) -> Int {
+        var previous = [Int](repeating: 0, count: b.count + 1)
+        for word in a {
+            var current = [0]
+            for (j, other) in b.enumerated() {
+                current.append(word == other ? previous[j] + 1 : max(previous[j + 1], current[j]))
+            }
+            previous = current
+        }
+        return previous[b.count]
     }
 }
 
