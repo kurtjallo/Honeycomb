@@ -20,6 +20,7 @@ public struct FinalTranscriber: Sendable {
                     continue
                 }
                 for range in try await detector.speechRanges(samples) {
+                    try Task.checkCancellation()
                     let start = max(0, Int(range.startMs * 16))
                     let end = min(samples.count, Int(range.endMs * 16))
                     guard end - start > 4_000 else { continue }
