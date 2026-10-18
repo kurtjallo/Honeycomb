@@ -88,6 +88,8 @@ extension ProviderError {
         default: break
         }
         if contextLimitPhrases.contains(where: { body.contains($0) }) { return .contextTooLong }
+        // A gateway's 504 "took too long" is about time, not the prompt.
+        if (400..<500).contains(status), body.contains("too long") { return .contextTooLong }
         if body.contains("overloaded_error") { return .rateLimited(retryAfter: retryAfter) }
         switch status {
         case 400..<500: return .badRequest
@@ -96,7 +98,7 @@ extension ProviderError {
         }
     }
 
-    private static let contextLimitPhrases = ["context length", "context_length", "maximum context", "context window", "too long"]
+    private static let contextLimitPhrases = ["context length", "context_length", "maximum context", "context window"]
     private static let creditPhrases = ["credit balance", "insufficient_quota"]
 
     /// Every failure leaves a provider as a `ProviderError`, so the UI has one message per case.
