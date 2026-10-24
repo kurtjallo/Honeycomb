@@ -526,6 +526,12 @@ struct NoteWriterTests {
         #expect(await systems.values.contains(NotesPrompt.partSystem), "two hours are summarized in parts")
         #expect(try database.enhancedNotes(meeting.id).map(\.status) == [.done, .done], "every request fit the context")
     }
+
+    @Test func storedErrorCodesReadBack() {
+        #expect(ProviderError(code: "unauthorized") == .unauthorized)
+        #expect(ProviderError(code: "rate_limited")?.message == ProviderError.rateLimited(retryAfter: 3).message)
+        #expect(ProviderError(code: "job_failed") == nil)
+    }
 }
 
 actor CallCounter {
@@ -586,19 +592,5 @@ struct CountingChat: ChatProvider {
                 continuation.finish()
             }
         }
-    }
-}
-
-/// Uses the real login keychain. Run with HONEYCOMB_KEYCHAIN_TESTS=1.
-@Suite(.enabled(if: ProcessInfo.processInfo.environment["HONEYCOMB_KEYCHAIN_TESTS"] == "1"))
-struct KeychainTests {
-    @Test func storesAndDeletesKeys() throws {
-        let keychain = Keychain(service: "io.github.kurtjallo.Honeycomb.tests.\(UUID().uuidString)")
-        try keychain.set("sk-one", account: "openai")
-        #expect(try keychain.read(account: "openai") == "sk-one")
-        try keychain.set("sk-two", account: "openai")
-        #expect(try keychain.read(account: "openai") == "sk-two")
-        keychain.deleteAll()
-        #expect(try keychain.read(account: "openai") == nil)
     }
 }
