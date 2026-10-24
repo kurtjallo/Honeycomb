@@ -242,7 +242,7 @@ struct NoteWriterTests {
         for _ in 0..<50 {
             let meeting = Meeting(title: "Zoom call", state: .writingNotes)
             try pool.insert(meeting)
-            var note = EnhancedNote(meetingId: meeting.id, templateId: "general", providerId: "builtin", model: "m")
+            var note = EnhancedNote(meetingId: meeting.id, templateId: "general", model: "m")
             note.status = .done
             let finished = note
             async let notes: Void = Task.detached { try pool.finishEnhanced(finished, suggestedTitle: "AI title") }.value

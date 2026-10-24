@@ -109,7 +109,6 @@ public final class AppDatabase: Sendable {
                 t.primaryKey("id", .text)
                 t.column("meeting_id", .text).notNull().references("meeting", onDelete: .cascade).indexed()
                 t.column("template_id", .text)
-                t.column("provider_id", .text)
                 t.column("model", .text)
                 t.column("doc", .text)
                 t.column("markdown", .text).notNull().defaults(to: "")
@@ -175,27 +174,6 @@ public final class AppDatabase: Sendable {
                 t.synchronize(withTable: "chunk")
                 t.tokenizer = .porter(wrapping: .unicode61())
                 t.column("text")
-            }
-
-            try db.create(table: "provider") { t in
-                t.primaryKey("id", .text)
-                t.column("name", .text).notNull()
-                t.column("kind", .text).notNull()
-                t.column("base_url", .text)
-                t.column("key_ref", .text)
-                t.column("context_tokens", .integer).notNull()
-                t.column("is_local", .boolean).notNull()
-            }
-
-            try db.create(table: "route") { t in
-                t.primaryKey("task", .text)
-                t.column("provider_id", .text).notNull().references("provider", onDelete: .cascade)
-                t.column("model", .text).notNull()
-            }
-
-            try db.create(table: "cloud_consent") { t in
-                t.primaryKey("provider_id", .text).references("provider", onDelete: .cascade)
-                t.column("granted_at", .datetime).notNull()
             }
 
             try db.create(table: "model") { t in

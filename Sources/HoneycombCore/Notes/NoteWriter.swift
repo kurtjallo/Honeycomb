@@ -28,7 +28,7 @@ public struct NoteWriter: Sendable {
         let transcript = NotesPrompt.transcript(try database.transcript(meetingID))
         let messages = try await prompt(input, transcript: transcript, model: model, meeting: meetingID)
 
-        var note = EnhancedNote(meetingId: meetingID, templateId: input.template.id, providerId: nil, model: model)
+        var note = EnhancedNote(meetingId: meetingID, templateId: input.template.id, model: model)
         var raw = ""
         // Nil until the first words arrive. The version is added then, so a model that isn't ready
         // yet leaves nothing behind.

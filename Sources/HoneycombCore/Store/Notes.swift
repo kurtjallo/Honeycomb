@@ -57,43 +57,4 @@ extension AppDatabase {
                            arguments: [enhanced, Date(), meeting])
         }
     }
-
-    public func saveProvider(_ provider: ProviderRecord) throws {
-        try writer.write { try provider.save($0) }
-    }
-
-    public func providers() throws -> [ProviderRecord] {
-        try reader.read { try ProviderRecord.order(Column("name")).fetchAll($0) }
-    }
-
-    public func provider(_ id: String) throws -> ProviderRecord? {
-        try reader.read { try ProviderRecord.fetchOne($0, key: id) }
-    }
-
-    /// Its routes and cloud consent go with it. The built-in provider is never deleted.
-    public func deleteProvider(_ id: String) throws {
-        _ = try writer.write { db in
-            try ProviderRecord.filter(Column("id") == id && Column("kind") != ProviderKind.builtin.rawValue).deleteAll(db)
-        }
-    }
-
-    public func route(_ task: AITask) throws -> Route? {
-        try reader.read { try Route.fetchOne($0, key: task.rawValue) }
-    }
-
-    public func routes() throws -> [Route] {
-        try reader.read { try Route.fetchAll($0) }
-    }
-
-    public func saveRoute(_ route: Route) throws {
-        try writer.write { try route.save($0) }
-    }
-
-    public func hasCloudConsent(_ provider: String) throws -> Bool {
-        try reader.read { try CloudConsent.fetchOne($0, key: provider) != nil }
-    }
-
-    public func grantCloudConsent(_ provider: String) throws {
-        try writer.write { try CloudConsent(providerId: provider).save($0) }
-    }
 }

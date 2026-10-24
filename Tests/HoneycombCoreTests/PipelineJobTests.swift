@@ -177,7 +177,7 @@ struct PipelineJobTests {
     }
 
     @Test func launchCancelsNotesLeftGenerating() async throws {
-        try database.saveEnhanced(EnhancedNote(meetingId: meeting.id, templateId: nil, providerId: nil, model: nil))
+        try database.saveEnhanced(EnhancedNote(meetingId: meeting.id, templateId: nil, model: nil))
         await pipeline.start()
         await pipeline.stop()
         #expect(try database.enhancedNotes(meeting.id).map(\.status) == [.canceled])
