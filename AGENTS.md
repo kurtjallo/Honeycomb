@@ -24,7 +24,7 @@ There is no Xcode project. `scripts/build` runs `xcodebuild` on the Swift packag
 
 ## Rules
 
-- Audio, transcripts, and notes never leave the Mac. The network is only for model downloads, update checks, and AI providers the user connected.
+- Audio, transcripts, and notes never leave the Mac. The network is only for model downloads and update checks.
 - Never start a recording without the user's click.
 - Only `ModelHost` loads local models. During a recording, only the speech model and Qwen3.5-4B may be loaded.
 - Put every swappable part behind a protocol with a test fake, such as `TrackRecorder`, `TranscriptionEngine`, or `ChatProvider`.
