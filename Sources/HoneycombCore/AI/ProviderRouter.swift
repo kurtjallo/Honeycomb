@@ -1,13 +1,7 @@
 import Foundation
 import Synchronization
 
-public enum RouteError: Error, Equatable, Sendable {
-    /// No route is stored for the task: the user hasn't made the "Ask once" AI choice yet.
-    case notChosen
-}
-
-/// Picks the provider and model for each task from the stored `route` and `provider` rows.
-/// API keys come from Keychain by `keyRef`, never from SQLite.
+/// Saves providers and builds their adapters. API keys come from Keychain by `keyRef`, never from SQLite.
 public struct ProviderRouter: Sendable {
     let database: AppDatabase
     let keychain: any SecretStore
@@ -20,13 +14,6 @@ public struct ProviderRouter: Sendable {
         self.keychain = keychain
         self.builtIn = builtIn
         self.session = session
-    }
-
-    public func resolve(_ task: AITask) throws -> ResolvedProvider {
-        guard let route = try database.route(task), let record = try database.provider(route.providerId) else {
-            throw RouteError.notChosen
-        }
-        return ResolvedProvider(record: record, model: route.model, provider: try adapter(for: record))
     }
 
     /// The adapter for a saved provider, with its key from Keychain.

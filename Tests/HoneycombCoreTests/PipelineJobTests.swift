@@ -21,7 +21,7 @@ struct PipelineJobTests {
         try database.insert(meeting)
     }
 
-    func handle(_ enhance: @escaping @Sendable (UUID) async throws -> NoteWriter.Outcome) async {
+    func handle(_ enhance: @escaping @Sendable (UUID) async throws -> Void) async {
         var handlers = Pipeline.Handlers()
         handlers.enhance = enhance
         await pipeline.setHandlers(handlers)
@@ -45,7 +45,6 @@ struct PipelineJobTests {
         await handle { _ in
             await calls.add()
             try await Task.sleep(for: .seconds(30))
-            return .written(UUID())
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -62,7 +61,6 @@ struct PipelineJobTests {
         let calls = CallCounter()
         await handle { _ in
             await calls.add()
-            return .written(UUID())
         }
         await pipeline.start()
         host.gate.set(true)
@@ -77,23 +75,13 @@ struct PipelineJobTests {
         await pipeline.stop()
     }
 
-    func routeNotes(to baseURL: String) throws {
-        try database.saveProvider(ProviderRecord(id: "server", name: "Server", kind: .openAICompatible, baseUrl: baseURL,
-                                                 contextTokens: 32_000, isLocal: false))
-        try database.saveRoute(Route(task: .enhance, providerId: "server", model: "m"))
-    }
-
-    @Test(arguments: [("https://api.openai.com/v1", false), ("http://192.168.1.20:11434/v1", false),
-                      ("http://localhost:11434/v1", true), ("http://127.0.0.1:1234/v1", true), ("http://[::1]:11434/v1", true)])
-    func aRecordingStopsNotesOnlyWhenTheyRunOnThisMac(baseURL: String, onThisMac: Bool) async throws {
-        try routeNotes(to: baseURL)
+    @Test func aRecordingAlwaysPausesNotes() async throws {
         let calls = CallCounter()
         let release = AsyncStream<Void>.makeStream()
         await handle { _ in
             await calls.add()
             for await _ in release.stream { break }
             try Task.checkCancellation()
-            return .written(UUID())
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -102,51 +90,7 @@ struct PipelineJobTests {
         host.gate.set(true)
         await pipeline.recordingStarted()
         release.continuation.yield()
-        if onThisMac {
-            #expect(try await eventually { try enhanceJob()?.status == .queued }, "the notes wait for the recording")
-        } else {
-            #expect(try await eventually { try enhanceJob()?.status == .done }, "the notes finish during the recording")
-            #expect(try database.meeting(meeting.id)?.state == .indexing)
-        }
-        await pipeline.stop()
-    }
-
-    @Test func aRecordingStopsBuiltInNotesEvenAfterTheRouteMovesToTheCloud() async throws {
-        let calls = CallCounter()
-        let preempted = CallCounter()
-        await handle { _ in
-            guard await calls.add() == 1 else { return .written(UUID()) }
-            do { try await Task.sleep(for: .seconds(30)) } catch { await preempted.add(); throw error }
-            return .written(UUID())
-        }
-        await pipeline.start()
-        await pipeline.enqueue(.enhance, meeting: meeting.id)
-        #expect(await eventually { await calls.count == 1 })
-
-        try routeNotes(to: "https://api.openai.com/v1")
-        host.gate.set(true)
-        await pipeline.recordingStarted()
-        #expect(await eventually { await preempted.count == 1 }, "the built-in job that runs stops for the recording")
-        await pipeline.stop()
-    }
-
-    @Test(arguments: ["http://0.0.0.0:11434/v1", "http://localhost.:11434/v1", "http://LOCALHOST:11434/v1"])
-    func serversOnThisMacCountAsThisMac(baseURL: String) {
-        let record = ProviderRecord(id: "s", name: "s", kind: .openAICompatible, baseUrl: baseURL, contextTokens: 1, isLocal: false)
-        #expect(Pipeline.runsOnThisMac(record))
-    }
-
-    @Test func notesOnAnotherMachineStartDuringARecording() async throws {
-        try routeNotes(to: "https://api.openai.com/v1")
-        let calls = CallCounter()
-        await handle { _ in
-            await calls.add()
-            return .written(UUID())
-        }
-        host.gate.set(true)
-        await pipeline.start()
-        await pipeline.enqueue(.enhance, meeting: meeting.id)
-        #expect(await eventually { await calls.count == 1 })
+        #expect(try await eventually { try enhanceJob()?.status == .queued }, "the notes wait for the recording")
         await pipeline.stop()
     }
 
@@ -154,7 +98,6 @@ struct PipelineJobTests {
         let latch = Latch()
         await handle { _ in
             await latch.wait()
-            return .written(UUID())
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -191,7 +134,6 @@ struct PipelineJobTests {
         let calls = CallCounter()
         await handle { _ in
             if await calls.add() == 1 { throw ProviderError.unreachable }
-            return .written(UUID())
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -211,10 +153,7 @@ struct PipelineJobTests {
             }
             continuation.answer("# Acme renewal\n\n## Summary\n\n- Renews if SSO ships by Q1")
         }
-        let writer = NoteWriter(database: database) { _ in
-            ResolvedProvider(record: ProviderRecord(id: "builtin", name: "x", kind: .builtin, contextTokens: 32_000, isLocal: true),
-                             model: "m", provider: provider)
-        }
+        let writer = NoteWriter(database: database, chat: provider, model: { "m" })
         await handle { try await writer.write($0) }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -260,14 +199,12 @@ struct PipelineJobTests {
         #expect(failed.stateDetail == "crashed")
     }
 
-    @Test(arguments: [NoteWriter.Outcome.written(UUID()), .waiting(.cloudConsent)])
-    func enqueueWhileTheJobRunsRunsItAgain(first: NoteWriter.Outcome) async throws {
+    @Test func enqueueWhileTheJobRunsRunsItAgain() async throws {
         let calls = CallCounter()
         let release = AsyncStream<Void>.makeStream()
         await handle { _ in
-            guard await calls.add() == 1 else { return .written(UUID()) }
+            guard await calls.add() == 1 else { return }
             for await _ in release.stream { break }
-            return first
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)

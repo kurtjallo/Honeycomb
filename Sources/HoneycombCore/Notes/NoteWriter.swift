@@ -1,45 +1,24 @@
 import Foundation
 
-public struct ResolvedProvider: Sendable {
-    public let record: ProviderRecord
-    public let model: String
-    public let provider: any ChatProvider
-
-    public init(record: ProviderRecord, model: String, provider: any ChatProvider) {
-        self.record = record
-        self.model = model
-        self.provider = provider
-    }
-}
-
 /// The `enhance` job: writes AI notes into a new version and makes it current. The pipeline owns
 /// it, so notes are saved even when no window is open.
 public struct NoteWriter: Sendable {
     let database: AppDatabase
-    let resolve: @Sendable (AITask) async throws -> ResolvedProvider
+    let chat: any ChatProvider
+    let currentModel: @Sendable () -> String
+    let contextTokens: Int
 
-    public init(database: AppDatabase, resolve: @escaping @Sendable (AITask) async throws -> ResolvedProvider) {
+    public init(database: AppDatabase, chat: any ChatProvider, model: @escaping @Sendable () -> String,
+                contextTokens: Int = BuiltInProvider.contextTokens) {
         self.database = database
-        self.resolve = resolve
+        self.chat = chat
+        self.currentModel = model
+        self.contextTokens = contextTokens
     }
 
-    public enum Outcome: Equatable, Sendable {
-        case written(UUID)
-        /// The notes need the user first: an AI choice, or consent to send the meeting to a cloud provider.
-        case waiting(WaitReason)
-    }
-
-    public func write(_ meetingID: UUID) async throws -> Outcome {
-        guard let meeting = try database.meeting(meetingID) else { return .written(meetingID) }
-        let resolved: ResolvedProvider
-        do {
-            resolved = try await resolve(.enhance)
-        } catch RouteError.notChosen {
-            return .waiting(.aiNotChosen)
-        }
-        if !resolved.record.isLocal, try !database.hasCloudConsent(resolved.record.id) {
-            return .waiting(.cloudConsent)
-        }
+    public func write(_ meetingID: UUID) async throws {
+        guard let meeting = try database.meeting(meetingID) else { return }
+        let model = currentModel()
         let input = NotesPrompt.Meeting(
             title: meeting.title, startedAt: meeting.startAt, durationMs: meeting.durationMs,
             appName: meeting.callAppId.flatMap { id in CallAppCatalog.builtIn.first { $0.bundleId == id }?.name },
@@ -47,18 +26,17 @@ public struct NoteWriter: Sendable {
             userNotes: try database.userNote(meetingID)?.markdown ?? "",
             terms: try database.dictionaryTerms().map(\.term))
         let transcript = NotesPrompt.transcript(try database.transcript(meetingID))
-        let messages = try await prompt(input, transcript: transcript, resolved: resolved, meeting: meetingID)
+        let messages = try await prompt(input, transcript: transcript, model: model, meeting: meetingID)
 
-        var note = EnhancedNote(meetingId: meetingID, templateId: input.template.id,
-                                providerId: resolved.record.id, model: resolved.model)
+        var note = EnhancedNote(meetingId: meetingID, templateId: input.template.id, providerId: nil, model: model)
         var raw = ""
         // Nil until the first words arrive. The version is added then, so a model that isn't ready
         // yet leaves nothing behind.
         var lastWrite: ContinuousClock.Instant?
         let finish: FinishReason
         do {
-            let request = ChatRequest(model: resolved.model, messages: messages, maxTokens: NotesPrompt.outputTokens)
-            finish = try await read(request, from: resolved.provider, for: meetingID) { piece in
+            let request = ChatRequest(model: model, messages: messages, maxTokens: NotesPrompt.outputTokens)
+            finish = try await read(request, for: meetingID) { piece in
                 raw += piece
                 if let lastWrite, ContinuousClock.now - lastWrite < .seconds(1) { return }
                 if lastWrite == nil { Log.info("notes.started", ["meeting": .id(meetingID)]) }
@@ -87,7 +65,6 @@ public struct NoteWriter: Sendable {
             throw cancelled ? CancellationError() : error
         }
         Log.info("notes.finished", ["meeting": .id(meetingID), "truncated": .bool(finish == .length)])
-        return .written(note.id)
     }
 
     /// Rounds of summarizing summaries before a meeting counts as too long for the model.
@@ -95,10 +72,9 @@ public struct NoteWriter: Sendable {
 
     /// Long transcripts that don't fit the model are summarized in parts. The summaries are
     /// summarized again until they fit, because a small context can't hold one round of them.
-    private func prompt(_ input: NotesPrompt.Meeting, transcript: String, resolved: ResolvedProvider,
-                        meeting: UUID) async throws -> [ChatMessage] {
+    private func prompt(_ input: NotesPrompt.Meeting, transcript: String, model: String, meeting: UUID) async throws -> [ChatMessage] {
         let system = NotesPrompt.system(input)
-        let budget = resolved.record.contextTokens - NotesPrompt.outputTokens
+        let budget = contextTokens - NotesPrompt.outputTokens
         let partBudget = max(1_000, budget - NotesPrompt.estimateTokens(NotesPrompt.partSystem) - 500)
         var text = transcript
         var rounds = 0
@@ -109,11 +85,11 @@ public struct NoteWriter: Sendable {
             var summaries: [String] = []
             for part in NotesPrompt.parts(text, maxTokens: partBudget) {
                 try Task.checkCancellation()
-                let request = ChatRequest(model: resolved.model, messages: [
+                let request = ChatRequest(model: model, messages: [
                     ChatMessage(.system, NotesPrompt.partSystem), ChatMessage(.user, part),
                 ], maxTokens: NotesPrompt.outputTokens)
                 var summary = ""
-                let finish = try await read(request, from: resolved.provider, for: meeting) { summary += $0 }
+                let finish = try await read(request, for: meeting) { summary += $0 }
                 summary = NotesPrompt.answer(summary)
                 if finish == .length, summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw ProviderError.truncated }
                 summaries.append(summary)
@@ -126,11 +102,10 @@ public struct NoteWriter: Sendable {
     /// Reads one answer to its end. The meeting shows its notes being written once the model
     /// answers, which after a wait is the first sign the model is ready. An `AsyncThrowingStream`
     /// just ends when its task is cancelled, so an answer without `.finished` was cut off.
-    private func read(_ request: ChatRequest, from provider: any ChatProvider, for meeting: UUID,
-                      onText: (String) throws -> Void) async throws -> FinishReason {
+    private func read(_ request: ChatRequest, for meeting: UUID, onText: (String) throws -> Void) async throws -> FinishReason {
         var answered = false
         var finish: FinishReason?
-        for try await delta in provider.stream(request) {
+        for try await delta in chat.stream(request) {
             if !answered {
                 answered = true
                 try database.setState(meeting, .writingNotes)

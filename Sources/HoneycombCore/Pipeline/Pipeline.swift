@@ -5,7 +5,7 @@ import Foundation
 /// the database and replaces only its own outputs, so running one twice is safe.
 public actor Pipeline {
     public struct Handlers: Sendable {
-        public var enhance: (@Sendable (UUID) async throws -> NoteWriter.Outcome)?
+        public var enhance: (@Sendable (UUID) async throws -> Void)?
         public var index: (@Sendable (UUID) async throws -> Void)?
         public var sourceLink: (@Sendable (UUID) async throws -> Void)?
         public var mirrorMarkdown: (@Sendable (UUID) async throws -> Void)?
@@ -40,8 +40,7 @@ public actor Pipeline {
     private var handlers = Handlers()
     private var loop: Task<Void, Never>?
     private var wake: CheckedContinuation<Void, Never>?
-    /// `onThisMac` is decided at claim, so a route changed while the job runs doesn't hide it from a recording.
-    private var current: (job: Job, onThisMac: Bool, task: Task<Void, Error>, again: Bool)?
+    private var current: (job: Job, task: Task<Void, Error>, again: Bool)?
 
     public init(database: AppDatabase, paths: Paths, host: ModelHost, policy: Policy = Policy()) {
         self.database = database
@@ -95,26 +94,15 @@ public actor Pipeline {
 
     /// A new recording takes priority: model work in progress on this Mac stops and goes back in the queue.
     public func recordingStarted() {
-        guard let current, current.onThisMac else { return }
+        guard let current, usesThisMac(current.job.kind) else { return }
         current.task.cancel()
     }
 
     private func usesThisMac(_ kind: JobKind) -> Bool {
         switch kind {
         case .finalizeAudio, .mirrorMarkdown: false
-        case .transcribeFinal, .index, .sourceLink: true
-        case .enhance:
-            (try? database.route(.enhance)).flatMap { try? database.provider($0.providerId) }.map(Self.runsOnThisMac) ?? true
+        case .transcribeFinal, .enhance, .index, .sourceLink: true
         }
-    }
-
-    static func runsOnThisMac(_ provider: ProviderRecord) -> Bool {
-        if provider.kind == .builtin { return true }
-        guard var host = provider.baseUrl.flatMap(URL.init(string:))?.host(percentEncoded: false)?.lowercased() else { return false }
-        if host.hasSuffix(".") { host.removeLast() }
-        if ["localhost", "::1", "0.0.0.0"].contains(host) { return true }
-        let octets = host.split(separator: ".")
-        return octets.count == 4 && octets.first == "127" && octets.allSatisfy { UInt8($0) != nil }
     }
 
     private func recover() {
@@ -160,7 +148,7 @@ public actor Pipeline {
         let onThisMac = Set(JobKind.allCases.filter(usesThisMac))
         guard let job = try? database.claimNextJob(skipping: host.gate.isRecording ? onThisMac : []) else { return nil }
         let task = Task { try await self.perform(job) }
-        current = (job, onThisMac.contains(job.kind), task, false)
+        current = (job, task, false)
         return (job, task)
     }
 
@@ -215,9 +203,7 @@ public actor Pipeline {
                 try database.setState(meeting, .writingNotes)
             }
             guard let enhance = handlers.enhance else { return try database.setState(meeting, .ready) }
-            if case .waiting(let reason) = try await enhance(meeting) {
-                return try database.setState(meeting, .waiting, detail: reason.rawValue)
-            }
+            try await enhance(meeting)
             try database.setState(meeting, .indexing)
             enqueue(.index, meeting: meeting)
             enqueue(.sourceLink, meeting: meeting)

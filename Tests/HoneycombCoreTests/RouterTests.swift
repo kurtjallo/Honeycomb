@@ -29,42 +29,11 @@ struct RouterTests {
         #expect(builtIns.first?.isLocal == true)
     }
 
-    @Test func builtInRouteResolvesToTheBuiltInModel() throws {
-        try database.saveRoute(Route(task: .enhance, providerId: ProviderRecord.builtIn.id, model: ModelCatalog.builtInLLM))
-        let resolved = try router.resolve(.enhance)
-        #expect(resolved.provider is BuiltInProvider)
-        #expect(resolved.model == ModelCatalog.builtInLLM)
-        #expect(resolved.record.contextTokens == 32_768)
-    }
-
-    @Test func eachTaskUsesItsOwnRoute() throws {
-        let ollama = try router.save(ProviderDraft(name: "Ollama", kind: .openAICompatible, baseURL: "http://localhost:11434/v1",
-                                                   contextTokens: 8_000))
-        let claude = try router.save(ProviderDraft(name: "Claude", kind: .anthropic, baseURL: "https://api.anthropic.com",
-                                                   apiKey: "sk-test", contextTokens: 200_000))
-        try database.saveRoute(Route(task: .enhance, providerId: claude.id, model: "claude-opus-5-5"))
-        try database.saveRoute(Route(task: .chat, providerId: ollama.id, model: "qwen3.5:9b"))
-
-        let notes = try router.resolve(.enhance)
-        #expect(notes.provider is AnthropicProvider)
-        #expect(notes.model == "claude-opus-5-5")
-        #expect(notes.record.isLocal == false)
-        let chat = try router.resolve(.chat)
-        #expect(chat.provider is OpenAICompatibleProvider)
-        #expect(chat.model == "qwen3.5:9b")
-        #expect(chat.record.isLocal == true)
-    }
-
-    @Test func missingRouteIsNotChosen() {
-        #expect(throws: RouteError.notChosen) { try router.resolve(.enhance) }
-    }
-
     @Test func anthropicWithoutAKeyIsUnauthorized() throws {
         let claude = try router.save(ProviderDraft(name: "Claude", kind: .anthropic, baseURL: "https://api.anthropic.com",
                                                    contextTokens: 200_000))
         #expect(claude.keyRef == nil)
-        try database.saveRoute(Route(task: .enhance, providerId: claude.id, model: "claude-opus-5-5"))
-        #expect(throws: ProviderError.unauthorized) { try router.resolve(.enhance) }
+        #expect(throws: ProviderError.unauthorized) { try router.adapter(for: claude) }
     }
 
     @Test("a Keychain read that fails, such as while the keychain is locked, is an error, not a missing key")
@@ -81,10 +50,9 @@ struct RouterTests {
     func unreadableKeyStopsTheRequest(kind: ProviderKind) throws {
         let saved = try router.save(ProviderDraft(name: "Cloud", kind: kind, baseURL: "https://api.example.com",
                                                   apiKey: "sk-1", contextTokens: 128_000))
-        try database.saveRoute(Route(task: .enhance, providerId: saved.id, model: "x"))
         keychain.readError.withLock { $0 = Keychain.KeychainError.status(errSecInteractionNotAllowed) }
 
-        let error = #expect(throws: ProviderError.self) { try router.resolve(.enhance) }
+        let error = #expect(throws: ProviderError.self) { try router.adapter(for: saved) }
         #expect(error?.code == "keychain_unavailable")
         #expect(error?.isTransient == false)
         #expect(error.flatMap { ProviderError(code: $0.code) } == error, "a stored code reads back")
@@ -132,86 +100,6 @@ struct RouterTests {
         #expect(try draft("https://api.openai.com/v1").record().name == "api.openai.com")
         #expect(throws: ProviderError.insecureURL) { try draft("http://api.example.com/v1").record() }
         #expect(throws: ProviderError.invalidURL) { try draft("localhost:11434").record() }
-    }
-
-    func meetingWithTranscript() throws -> Meeting {
-        let meeting = Meeting(title: "Zoom call", state: .transcribing)
-        try database.insert(meeting)
-        try database.replaceTranscript([
-            TranscriptLine(channel: .them, startMs: 0, endMs: 3_000, text: "We'd renew if SSO lands by end of Q1."),
-            TranscriptLine(channel: .me, startMs: 3_500, endMs: 5_000, text: "Got it, I'll send the pricing deck."),
-        ], duplicates: [], meeting: meeting.id, engine: "test")
-        return meeting
-    }
-
-    /// The real router picks the record and model. Only the network adapter is swapped for a fake.
-    func writer() -> NoteWriter {
-        NoteWriter(database: database) { [router] task in
-            let resolved = try router.resolve(task)
-            return ResolvedProvider(record: resolved.record, model: resolved.model,
-                                    provider: FakeChat(chunks: ["# Acme renewal\n\n## Summary\n\n- Renews if SSO ships"]))
-        }
-    }
-
-    func settled(_ id: UUID) async throws -> Meeting {
-        for _ in 0..<200 {
-            if let meeting = try database.meeting(id), [.waiting, .ready, .failed].contains(meeting.state),
-               try !database.hasOpenJob(.enhance, meeting: id) {
-                return meeting
-            }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        throw CancellationError()
-    }
-
-    @Test func noRouteWaitsForTheAIChoice() async throws {
-        let meeting = try meetingWithTranscript()
-        #expect(try await writer().write(meeting.id) == .waiting(.aiNotChosen))
-        #expect(try database.enhancedNotes(meeting.id).isEmpty)
-    }
-
-    @Test func builtInModelStillDownloadingLeavesNoVersion() async throws {
-        let meeting = try meetingWithTranscript()
-        try database.saveRoute(Route(task: .enhance, providerId: ProviderRecord.builtIn.id, model: ModelCatalog.builtInLLM))
-        let writer = NoteWriter(database: database) { [router] in try router.resolve($0) }
-        await #expect(throws: ModelHostError.modelMissing(ModelCatalog.builtInLLM)) { try await writer.write(meeting.id) }
-        #expect(PipelineError.waitReason(for: ModelHostError.modelMissing(ModelCatalog.builtInLLM)) == .modelMissing)
-        #expect(try database.enhancedNotes(meeting.id).isEmpty)
-    }
-
-    @Test func cloudRouteWaitsForConsentThenWrites() async throws {
-        let meeting = try meetingWithTranscript()
-        let paths = Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("router-\(UUID().uuidString)"))
-        let store = ModelStore(root: paths.models, database: nil)
-        let pipeline = Pipeline(database: database, paths: paths, host: ModelHost(store: store))
-        var handlers = Pipeline.Handlers()
-        handlers.enhance = { [writer = writer()] in try await writer.write($0) }
-        await pipeline.setHandlers(handlers)
-        await pipeline.start()
-
-        await pipeline.enhanceAnyway(meeting.id)
-        var waiting = try await settled(meeting.id)
-        #expect(waiting.waitReason == .aiNotChosen)
-
-        let cloud = try router.save(ProviderDraft(name: "OpenAI", kind: .openAICompatible, baseURL: "https://api.openai.com/v1",
-                                                  contextTokens: 128_000))
-        try database.saveRoute(Route(task: .enhance, providerId: cloud.id, model: "gpt-5"))
-        await pipeline.enhanceAnyway(meeting.id)
-        waiting = try await settled(meeting.id)
-        #expect(waiting.state == .waiting)
-        #expect(waiting.stateDetail == "cloud_consent")
-        #expect(try database.enhancedNotes(meeting.id).isEmpty)
-
-        try database.grantCloudConsent(cloud.id)
-        await pipeline.enhanceAnyway(meeting.id)
-        let written = try await settled(meeting.id)
-        #expect(written.state == .ready)
-        let note = try #require(try database.enhancedNotes(meeting.id).first)
-        #expect(written.currentEnhancedId == note.id)
-        #expect(note.providerId == cloud.id)
-        #expect(note.model == "gpt-5")
-        #expect(written.title == "Acme renewal")
-        await pipeline.stop()
     }
 
     @Test("two adapters for one provider take turns, and two providers run at once")
