@@ -45,21 +45,21 @@ public struct NoteWriter: Sendable {
                 lastWrite = .now
             }
             let output = NotesPrompt.parseOutput(raw, sections: input.template.sections)
-            if output.body.isEmpty { throw ProviderError.truncated }
+            if output.body.isEmpty { throw ChatError.truncated }
             // Notes open with a heading, so an answer cut off before its first one was still reasoning.
-            if finish == .length, output.title == nil, !output.body.hasPrefix("#") { throw ProviderError.truncated }
+            if finish == .length, output.title == nil, !output.body.hasPrefix("#") { throw ChatError.truncated }
             let doc = Authorship.apply(to: Markdown.document(output.body), userNotes: input.userNotes)
             note.doc = doc.encoded()
             note.markdown = output.body
             note.status = .done
-            note.errorCode = finish == .length ? ProviderError.truncated.code : nil
+            note.errorCode = finish == .length ? ChatError.truncated.rawValue : nil
             try database.finishEnhanced(note, suggestedTitle: output.title)
         } catch {
-            let cancelled = error is CancellationError || error as? ProviderError == .cancelled
+            let cancelled = error is CancellationError || error as? ChatError == .cancelled
             if lastWrite != nil {
                 note.markdown = NotesPrompt.parseOutput(raw, sections: input.template.sections).body
                 note.status = cancelled ? .canceled : .failed
-                note.errorCode = (error as? ProviderError)?.code ?? "failed"
+                note.errorCode = (error as? ChatError)?.rawValue ?? "failed"
                 try? database.saveEnhanced(note)
             }
             throw cancelled ? CancellationError() : error
@@ -81,7 +81,7 @@ public struct NoteWriter: Sendable {
         while true {
             let user = NotesPrompt.user(input, transcript: text, isSummary: rounds > 0)
             if NotesPrompt.estimateTokens(system + user) <= budget { return [ChatMessage(.system, system), ChatMessage(.user, user)] }
-            guard rounds < Self.summaryRounds else { throw ProviderError.contextTooLong }
+            guard rounds < Self.summaryRounds else { throw ChatError.contextTooLong }
             var summaries: [String] = []
             for part in NotesPrompt.parts(text, maxTokens: partBudget) {
                 try Task.checkCancellation()
@@ -91,7 +91,7 @@ public struct NoteWriter: Sendable {
                 var summary = ""
                 let finish = try await read(request, for: meeting) { summary += $0 }
                 summary = NotesPrompt.answer(summary)
-                if finish == .length, summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw ProviderError.truncated }
+                if finish == .length, summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw ChatError.truncated }
                 summaries.append(summary)
             }
             text = summaries.joined(separator: "\n")

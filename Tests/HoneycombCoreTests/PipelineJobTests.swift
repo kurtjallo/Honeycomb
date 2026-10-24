@@ -133,7 +133,7 @@ struct PipelineJobTests {
     @Test func aFailedJobRetriesAfterThePolicyDelay() async throws {
         let calls = CallCounter()
         await handle { _ in
-            if await calls.add() == 1 { throw ProviderError.unreachable }
+            if await calls.add() == 1 { throw ModelFailed() }
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)

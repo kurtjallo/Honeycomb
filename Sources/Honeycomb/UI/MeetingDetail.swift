@@ -70,7 +70,7 @@ struct MeetingDetail: View {
                         LiveStatus(status: model.status)
                     }
                     MeetingStateBanner(meeting: meeting)
-                    if current?.errorCode == ProviderError.truncated.code, meeting.state != .writingNotes {
+                    if current?.errorCode == ChatError.truncated.rawValue, meeting.state != .writingNotes {
                         Banner(text: "These notes were cut short because the model hit its length limit.", action: "Regenerate") {
                             model.regenerate(meeting, template: meeting.templateId ?? "general")
                         }
@@ -251,7 +251,7 @@ struct MeetingStateBanner: View {
                 model.enhanceAnyway(meeting)
             }
         case .failed:
-            Banner(text: meeting.stateDetail.flatMap(ProviderError.init(code:))?.message ?? "Something went wrong processing this meeting.",
+            Banner(text: meeting.stateDetail.flatMap(ChatError.init(rawValue:))?.message ?? "Something went wrong processing this meeting.",
                    action: "Retry", isWarning: true) { model.retry(meeting) }
         case .waiting:
             switch meeting.waitReason {

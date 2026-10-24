@@ -167,18 +167,18 @@ struct AuthorshipTests {
     }
 }
 
+struct ModelFailed: Error, Equatable {}
+
 struct FakeChat: ChatProvider {
     let chunks: [String]
     var finish: FinishReason = .stop
     var failAfter: Int?
 
-    func models() async throws -> [ModelInfo] { [ModelInfo(id: "fake")] }
-
     func stream(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
         AsyncThrowingStream { continuation in
             for (index, chunk) in chunks.enumerated() {
                 if let failAfter, index == failAfter {
-                    continuation.finish(throwing: ProviderError.unreachable)
+                    continuation.finish(throwing: ModelFailed())
                     return
                 }
                 continuation.yield(.text(chunk))
@@ -297,7 +297,7 @@ struct NoteWriterTests {
     }
 
     @Test func failureMarksTheVersionFailed() async throws {
-        await #expect(throws: ProviderError.unreachable) {
+        await #expect(throws: ModelFailed()) {
             try await writer(FakeChat(chunks: ["# T", "x", "y"], failAfter: 2)).write(meeting.id)
         }
         #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
@@ -305,7 +305,7 @@ struct NoteWriterTests {
     }
 
     @Test func aFailedVersionKeepsEveryWordThatArrived() async throws {
-        await #expect(throws: ProviderError.unreachable) {
+        await #expect(throws: ModelFailed()) {
             try await writer(FakeChat(chunks: ["# T\n\n## Summary\n", "- a", "x"], failAfter: 2)).write(meeting.id)
         }
         #expect(try database.enhancedNotes(meeting.id).first?.markdown == "## Summary\n- a")
@@ -322,7 +322,7 @@ struct NoteWriterTests {
     @Test func aTitleOnlyAnswerCutOffAtItsLimitFailsAndKeepsTheEarlierNotes() async throws {
         try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id)
         let good = try #require(try database.meeting(meeting.id)?.currentEnhancedId)
-        await #expect(throws: ProviderError.truncated) {
+        await #expect(throws: ChatError.truncated) {
             try await writer(FakeChat(chunks: ["# Acme renewal"], finish: .length)).write(meeting.id)
         }
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == good)
@@ -332,7 +332,7 @@ struct NoteWriterTests {
     @Test func anAnswerCutOffWhileStillReasoningFailsAndKeepsTheEarlierNotes() async throws {
         try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id)
         let good = try #require(try database.meeting(meeting.id)?.currentEnhancedId)
-        await #expect(throws: ProviderError.truncated) {
+        await #expect(throws: ChatError.truncated) {
             try await writer(FakeChat(chunks: ["Okay, let me look at the transcript. The customer said"], finish: .length))
                 .write(meeting.id)
         }
@@ -348,7 +348,7 @@ struct NoteWriterTests {
     }
 
     @Test func anEmptyAnswerFails() async throws {
-        await #expect(throws: ProviderError.truncated) { try await writer(FakeChat(chunks: [])).write(meeting.id) }
+        await #expect(throws: ChatError.truncated) { try await writer(FakeChat(chunks: [])).write(meeting.id) }
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
     }
 
@@ -450,7 +450,7 @@ struct NoteWriterTests {
     func smallModel(context: Int, summaryFinish: FinishReason = .stop) -> ScriptedChat {
         ScriptedChat { request, continuation in
             guard NotesPrompt.estimateTokens(request.messages.map(\.content).joined()) <= context - request.maxTokens else {
-                throw ProviderError.contextTooLong
+                throw ChatError.contextTooLong
             }
             if request.messages.first?.content == NotesPrompt.partSystem {
                 let bullet = "- [00:05] A point about the renewal, the security review, and the pricing deck.\n"
@@ -499,12 +499,12 @@ struct NoteWriterTests {
                 continuation.answer("# T\n\n- a")
             }
         }
-        await #expect(throws: ProviderError.truncated) { try await writer(provider, context: 8_192).write(meeting.id) }
+        await #expect(throws: ChatError.truncated) { try await writer(provider, context: 8_192).write(meeting.id) }
     }
 
     @Test func summariesThatNeverShrinkStopAsTooLong() async throws {
         try longCall(minutes: 30)
-        await #expect(throws: ProviderError.contextTooLong) {
+        await #expect(throws: ChatError.contextTooLong) {
             try await writer(smallModel(context: 4_096), context: 4_096).write(meeting.id)
         }
     }
@@ -528,9 +528,10 @@ struct NoteWriterTests {
     }
 
     @Test func storedErrorCodesReadBack() {
-        #expect(ProviderError(code: "unauthorized") == .unauthorized)
-        #expect(ProviderError(code: "rate_limited")?.message == ProviderError.rateLimited(retryAfter: 3).message)
-        #expect(ProviderError(code: "job_failed") == nil)
+        #expect(ChatError(rawValue: "truncated") == .truncated)
+        #expect(ChatError(rawValue: "context_too_long") == .contextTooLong)
+        #expect(ChatError(rawValue: "cancelled") == .cancelled)
+        #expect(ChatError(rawValue: "job_failed") == nil)
     }
 }
 
@@ -551,8 +552,6 @@ actor Recorded<Value: Sendable> {
 struct ScriptedChat: ChatProvider {
     let answer: @Sendable (ChatRequest, AsyncThrowingStream<ChatDelta, Error>.Continuation) async throws -> Void
 
-    func models() async throws -> [ModelInfo] { [] }
-
     func stream(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -571,26 +570,5 @@ extension AsyncThrowingStream<ChatDelta, Error>.Continuation {
         yield(.text(text))
         yield(.finished(reason))
         finish()
-    }
-}
-
-struct CountingChat: ChatProvider {
-    let counter: CallCounter
-    func models() async throws -> [ModelInfo] { [] }
-    func stream(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
-        let counter = counter
-        let size = NotesPrompt.estimateTokens(request.messages.map(\.content).joined())
-        return AsyncThrowingStream { continuation in
-            Task {
-                await counter.add()
-                if size > 8_000 - NotesPrompt.outputTokens {
-                    continuation.finish(throwing: ProviderError.contextTooLong)
-                    return
-                }
-                continuation.yield(.text("# T\n\n- [00:05] point"))
-                continuation.yield(.finished(.stop))
-                continuation.finish()
-            }
-        }
     }
 }

@@ -300,12 +300,10 @@ public actor Pipeline {
 }
 
 enum PipelineError {
-    /// Stored as a failed meeting's `state_detail`. A provider's code lets the banner show its message.
     static func code(for error: Error) -> String {
         switch error {
-        case let error as ProviderError: error.code
+        case let error as ChatError: error.rawValue
         case SessionMeta.ReadError.unreadable: "audio_meta_unreadable"
-        case is URLError: "network"
         default: "job_failed"
         }
     }
@@ -319,11 +317,9 @@ enum PipelineError {
         }
     }
 
-    /// A rejected key, a missing model, or a prompt that is still too long won't pass on a retry.
     static func isRetryable(_ error: Error) -> Bool {
         switch error {
-        case SessionMeta.ReadError.unreadable: false
-        case let error as ProviderError: error.isTransient
+        case SessionMeta.ReadError.unreadable, is ChatError: false
         default: true
         }
     }

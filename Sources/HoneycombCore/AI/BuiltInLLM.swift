@@ -157,10 +157,6 @@ public struct BuiltInProvider: ChatProvider {
         self.llm = llm
     }
 
-    public func models() async throws -> [ModelInfo] {
-        [ModelCatalog.builtInLLM, ModelCatalog.largeLLM].map { ModelInfo(id: $0, contextTokens: Self.contextTokens) }
-    }
-
     public func stream(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
         let llm = self.llm
         let id = request.model
@@ -196,7 +192,7 @@ public struct BuiltInProvider: ChatProvider {
                     continuation.yield(.finished(reason))
                     continuation.finish()
                 } catch is CancellationError {
-                    continuation.finish(throwing: ProviderError.cancelled)
+                    continuation.finish(throwing: ChatError.cancelled)
                 } catch {
                     continuation.finish(throwing: error)
                 }
