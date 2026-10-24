@@ -32,12 +32,5 @@
     <string>Honeycomb records the call audio as the "Them" side of the transcript.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Honeycomb can use Apple's on-device speech engine while its own speech model downloads.</string>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>Honeycomb can use an AI model server you run on your network, such as Ollama or LM Studio.</string>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsLocalNetworking</key>
-        <true/>
-    </dict>
 </dict>
 </plist>
