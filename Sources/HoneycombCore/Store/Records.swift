@@ -30,8 +30,6 @@ public enum WaitReason: String, Sendable {
     case modelMissing = "model_missing"
     /// A local model can't load while a call is being recorded.
     case modelBusy = "model_busy"
-    case cloudConsent = "cloud_consent"
-    case aiNotChosen = "ai_not_chosen"
 }
 
 public enum TitleSource: String, Codable, Sendable {

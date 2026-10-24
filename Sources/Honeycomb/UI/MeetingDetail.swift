@@ -255,15 +255,6 @@ struct MeetingStateBanner: View {
                    action: "Retry", isWarning: true) { model.retry(meeting) }
         case .waiting:
             switch meeting.waitReason {
-            case .cloudConsent:
-                if let provider = model.notesProvider, !provider.isLocal {
-                    Banner(text: "Honeycomb will send this meeting's transcript and notes to \(provider.name).",
-                           action: "Allow and write notes") { model.allowCloudAndWrite() }
-                } else {
-                    Banner(text: "Choose how Honeycomb writes notes.", action: "Choose…") { model.showAIChoice = true }
-                }
-            case .aiNotChosen:
-                Banner(text: "Choose how Honeycomb writes notes.", action: "Choose…") { model.showAIChoice = true }
             case .modelMissing:
                 modelMissing
             case .modelBusy, nil:
@@ -276,23 +267,18 @@ struct MeetingStateBanner: View {
         }
     }
 
-    /// The built-in model the notes route needs. A missing or failed download gets its button here,
-    /// because nothing else retries it.
     @ViewBuilder private var modelMissing: some View {
-        if let id = model.notesBuiltInModel {
-            let name = ModelCatalog.spec(id)?.name ?? "the AI model"
-            switch model.modelStates[id] ?? .missing {
-            case .missing:
-                Banner(text: "Notes need \(name), which isn't downloaded yet.", action: "Download") { model.downloadModel(id) }
-            case .failed(let code):
-                Banner(text: "The \(name) download failed. \(ModelDownloadRow.failureMessage(code))", action: "Retry download", isWarning: true) {
-                    model.downloadModel(id)
-                }
-            default:
-                Banner(text: "Waiting for \(name) to finish downloading.")
+        let id = model.notesModel
+        let name = ModelCatalog.spec(id)?.name ?? "the AI model"
+        switch model.modelStates[id] ?? .missing {
+        case .missing:
+            Banner(text: "Notes need \(name), which isn't downloaded yet.", action: "Download") { model.downloadModel(id) }
+        case .failed(let code):
+            Banner(text: "The \(name) download failed. \(ModelDownloadRow.failureMessage(code))", action: "Retry download", isWarning: true) {
+                model.downloadModel(id)
             }
-        } else {
-            Banner(text: "Waiting for a model to finish downloading.")
+        default:
+            Banner(text: "Waiting for \(name) to finish downloading.")
         }
     }
 }

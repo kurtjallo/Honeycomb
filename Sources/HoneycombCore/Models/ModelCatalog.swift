@@ -39,9 +39,6 @@ public enum ModelCatalog {
     public static let largeLLM = "qwen3.5-9b"
     public static let embedder = "qwen3-embedding-0.6b"
 
-    /// The models a full setup needs. The 4B downloads only once a route uses it. The 9B is optional, from Settings.
-    public static let firstRun = [vad, parakeet, builtInLLM, embedder]
-
     public static let notesModelKey = "honeycomb.notesModel"
 
     public static func notesModel(_ defaults: UserDefaults = .standard) -> String {
