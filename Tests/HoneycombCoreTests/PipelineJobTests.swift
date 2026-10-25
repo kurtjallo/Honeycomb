@@ -120,6 +120,23 @@ struct PipelineJobTests {
         await pipeline.stop()
     }
 
+    @Test func aPromptTooLongForTheModelFailsWithoutARetry() async throws {
+        let calls = CallCounter()
+        await handle { _ in
+            await calls.add()
+            throw ChatError.contextTooLong
+        }
+        await pipeline.start()
+        await pipeline.enqueue(.enhance, meeting: meeting.id)
+        #expect(try await eventually { try database.meeting(meeting.id)?.state == .failed })
+        let failed = try #require(try database.meeting(meeting.id))
+        #expect(failed.stateDetail == "context_too_long")
+        #expect(try enhanceJob()?.status == .failed)
+        #expect(try enhanceJob()?.attempt == 1)
+        #expect(await calls.count == 1)
+        await pipeline.stop()
+    }
+
     @Test func stopPutsAJobThatIgnoresCancellationBackAtOnce() async throws {
         let latch = Latch()
         await handle { _ in
