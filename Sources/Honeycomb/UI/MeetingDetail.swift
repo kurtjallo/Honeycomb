@@ -267,6 +267,7 @@ struct MeetingStateBanner: View {
         }
     }
 
+    /// A missing or failed download gets its button here, because nothing retries it until the next launch.
     @ViewBuilder private var modelMissing: some View {
         let id = model.notesModel
         let name = ModelCatalog.spec(id)?.name ?? "the AI model"

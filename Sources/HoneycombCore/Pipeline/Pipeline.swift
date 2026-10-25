@@ -317,6 +317,7 @@ enum PipelineError {
         }
     }
 
+    /// A prompt still too long after splitting, or a session file that can't be read, fails the same way on a retry.
     static func isRetryable(_ error: Error) -> Bool {
         switch error {
         case SessionMeta.ReadError.unreadable, is ChatError: false

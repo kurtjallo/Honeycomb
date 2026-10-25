@@ -2,8 +2,9 @@ import Foundation
 import Testing
 @testable import HoneycombCore
 
-/// A spoken call recorded through the capture path, transcribed by Parakeet, and written up by a
-/// real AI model, with the pipeline wired the way `AppModel.launch` wires it.
+/// A spoken call recorded through the capture path, transcribed by Parakeet, and written up by the
+/// built-in Qwen3.5 4B, with the notes job wired the way `AppModel.launch` wires it.
+/// Run with HONEYCOMB_MODEL_TESTS=1.
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["HONEYCOMB_MODEL_TESTS"] == "1"))
 struct EndToEndTests {
     let database: AppDatabase
