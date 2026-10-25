@@ -62,7 +62,7 @@ public struct NoteWriter: Sendable {
                 note.errorCode = (error as? ChatError)?.rawValue ?? "failed"
                 try? database.saveEnhanced(note)
             }
-            throw cancelled ? CancellationError() : error
+            throw error
         }
         Log.info("notes.finished", ["meeting": .id(meetingID), "truncated": .bool(finish == .length)])
     }

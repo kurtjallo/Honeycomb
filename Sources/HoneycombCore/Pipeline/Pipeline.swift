@@ -136,7 +136,7 @@ public actor Pipeline {
             let result = await task.result
             let again = current?.again == true
             current = nil
-            finish(job, result: result)
+            finish(job, result: result, preempted: task.isCancelled)
             if again, let meeting = job.meetingId { enqueue(job.kind, meeting: meeting) }
         }
     }
@@ -161,7 +161,7 @@ public actor Pipeline {
         timer.cancel()
     }
 
-    private func finish(_ job: Job, result: Result<Void, Error>) {
+    private func finish(_ job: Job, result: Result<Void, Error>, preempted: Bool) {
         switch result {
         case .success:
             try? database.finishJob(job)
@@ -169,7 +169,7 @@ public actor Pipeline {
             let reason = PipelineError.waitReason(for: error)
             try? database.deferJob(job, until: Date().addingTimeInterval(policy.waitRetry))
             if let meeting = job.meetingId { try? database.setState(meeting, .waiting, detail: reason?.rawValue) }
-        case .failure(is CancellationError):
+        case .failure where preempted:
             try? database.deferJob(job, until: Date())
             if job.kind == .enhance, let meeting = job.meetingId {
                 try? database.setState(meeting, .waiting, detail: WaitReason.modelBusy.rawValue)
