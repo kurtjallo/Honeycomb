@@ -85,4 +85,21 @@ struct BuiltInLLMTests {
         #expect(await !llm.isLoaded, "the model is dropped at once, not after the idle wait")
         #expect(runtime.events.last == "clear", "MLX's buffer cache is released with it")
     }
+
+    @Test("a use that arrives during a load waits for that load instead of starting another")
+    func usesDuringALoadShareIt() async throws {
+        let llm = try makeLLM()
+        runtime.holdLoads()
+        let uses = (0..<2).map { _ in Task { try await llm.use() } }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !runtime.events.contains("load \(folder)"), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(200))
+
+        runtime.releaseLoads()
+
+        for use in uses { #expect(try await use.value == folder) }
+        #expect(runtime.events == ["load \(folder)"])
+    }
 }
