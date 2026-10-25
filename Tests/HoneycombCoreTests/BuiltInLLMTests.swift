@@ -45,7 +45,6 @@ final class FakeRuntime: LLMRuntime {
 struct BuiltInLLMTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("llm-\(UUID().uuidString)")
     let runtime = FakeRuntime()
-    let id = ModelCatalog.builtInLLM
     let folder = ModelCatalog.spec(ModelCatalog.builtInLLM)!.folderName
 
     /// The store counts a model as downloaded when its folder exists.
@@ -58,14 +57,14 @@ struct BuiltInLLMTests {
     @Test("the model unloads after its last user has been idle for the wait")
     func unloadsWhenIdle() async throws {
         let llm = try makeLLM(idleUnload: .milliseconds(200))
-        _ = try await llm.use(id)
-        await llm.done(id)
+        _ = try await llm.use()
+        await llm.done()
 
         let deadline = ContinuousClock.now + .seconds(3)
-        while await llm.loadedModel != nil, ContinuousClock.now < deadline {
+        while await llm.isLoaded, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        #expect(await llm.loadedModel == nil)
+        #expect(await !llm.isLoaded)
         #expect(runtime.events == ["load \(folder)", "clear"], "the idle unload released the model's memory")
     }
 
@@ -73,7 +72,7 @@ struct BuiltInLLMTests {
     func cancelledDuringLoad() async throws {
         let llm = try makeLLM()
         runtime.holdLoads()
-        let using = Task { try await llm.use(id) }
+        let using = Task { try await llm.use() }
         let deadline = ContinuousClock.now + .seconds(3)
         while !runtime.events.contains("load \(folder)"), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
@@ -83,7 +82,7 @@ struct BuiltInLLMTests {
         runtime.releaseLoads()
 
         await #expect(throws: CancellationError.self) { try await using.value }
-        #expect(await llm.loadedModel == nil, "the model is dropped at once, not after the idle wait")
+        #expect(await !llm.isLoaded, "the model is dropped at once, not after the idle wait")
         #expect(runtime.events.last == "clear", "MLX's buffer cache is released with it")
     }
 }

@@ -44,15 +44,15 @@ extension LocalLLM where Runtime == MLXRuntime {
     }
 }
 
-/// A local LLM. It loads through ModelHost, so it never shares memory with a model it shouldn't,
+/// The built-in LLM. It loads through ModelHost, so it never shares memory with a model it shouldn't,
 /// and unloads after 5 idle minutes.
 public actor LocalLLM<Runtime: LLMRuntime> {
     private let store: ModelStore
     private let host: ModelHost
     private let runtime: Runtime
     private let idleUnload: Duration
-    private var loaded: (id: String, model: Runtime.Model)?
-    private var loading: (id: String, task: Task<Runtime.Model, Error>)?
+    private var loaded: Runtime.Model?
+    private var loading: Task<Runtime.Model, Error>?
     private var idleTask: Task<Void, Never>?
     private var users = 0
 
@@ -63,30 +63,30 @@ public actor LocalLLM<Runtime: LLMRuntime> {
         self.idleUnload = idleUnload
     }
 
-    public var loadedModel: String? { loaded?.id }
+    public var isLoaded: Bool { loaded != nil }
 
     /// Returns the model, loading it if needed. Pair every call with `done()`.
-    func use(_ id: String) async throws -> Runtime.Model {
+    func use() async throws -> Runtime.Model {
         idleTask?.cancel()
         users += 1
         do {
-            try await host.beginUse(.llm(id))
+            try await host.beginUse(.llm)
         } catch {
             users -= 1
             scheduleIdleUnload()
             throw error
         }
         do {
-            return try await model(id)
+            return try await model()
         } catch {
-            await done(id)
+            await done()
             throw error
         }
     }
 
-    func done(_ id: String) async {
+    func done() async {
         users = max(0, users - 1)
-        await host.endUse(.llm(id))
+        await host.endUse(.llm)
         if host.isRecording { runtime.clearCache() }
         scheduleIdleUnload()
     }
@@ -102,17 +102,17 @@ public actor LocalLLM<Runtime: LLMRuntime> {
         }
     }
 
-    /// A model being replaced stays loaded until ModelHost evicts it, which waits for its last lease
-    /// and then calls `forceUnload`. Callers that arrive meanwhile join the same load task.
-    private func model(_ id: String) async throws -> Runtime.Model {
-        if let loaded, loaded.id == id { return loaded.model }
-        if let loading, loading.id == id { return try await loading.task.value }
+    /// Callers that arrive during a load join the same load task.
+    private func model() async throws -> Runtime.Model {
+        if let loaded { return loaded }
+        if let loading { return try await loading.value }
         let task = Task { [store, host, runtime] in
+            let id = ModelCatalog.builtInLLM
             guard let folder = await store.folder(id) else { throw ModelHostError.modelMissing(id) }
-            try await host.register(.llm(id)) { [weak self] in await self?.forceUnload() }
+            try await host.register(.llm) { [weak self] in await self?.forceUnload() }
             let stillWanted = {
                 try Task.checkCancellation()
-                guard await host.canLoad(.llm(id)) else { throw ModelHostError.notAllowedNow }
+                guard await host.canLoad(.llm) else { throw ModelHostError.notAllowedNow }
             }
             do {
                 try await stillWanted()
@@ -121,14 +121,14 @@ public actor LocalLLM<Runtime: LLMRuntime> {
                 return model
             } catch {
                 runtime.clearCache()
-                await host.unregister(.llm(id))
+                await host.unregister(.llm)
                 throw error
             }
         }
-        loading = (id, task)
+        loading = task
         defer { loading = nil }
         let model = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-        loaded = (id, model)
+        loaded = model
         runtime.limitCache(recording: host.isRecording)
         return model
     }
@@ -140,10 +140,10 @@ public actor LocalLLM<Runtime: LLMRuntime> {
 
     /// ModelHost calls this when another model needs the memory.
     func forceUnload() async {
-        guard let loaded else { return }
-        self.loaded = nil
+        guard loaded != nil else { return }
+        loaded = nil
         runtime.clearCache()
-        await host.unregister(.llm(loaded.id))
+        await host.unregister(.llm)
         Log.info("llm.unloaded")
     }
 }
@@ -159,12 +159,11 @@ public struct BuiltInProvider: ChatProvider {
 
     public func stream(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
         let llm = self.llm
-        let id = request.model
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let container = try await llm.use(id)
-                    defer { Task { await llm.done(id) } }
+                    let container = try await llm.use()
+                    defer { Task { await llm.done() } }
                     let chat: [Chat.Message] = request.messages.map { message in
                         switch message.role {
                         case .system: .system(message.content)

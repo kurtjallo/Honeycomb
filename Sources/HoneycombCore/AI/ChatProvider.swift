@@ -17,14 +17,12 @@ public struct ChatMessage: Sendable, Equatable {
 }
 
 public struct ChatRequest: Sendable, Equatable {
-    public var model: String
     public var messages: [ChatMessage]
     /// Output tokens reserved for the answer.
     public var maxTokens: Int
     public var temperature: Double
 
-    public init(model: String, messages: [ChatMessage], maxTokens: Int = 2_000, temperature: Double = 0.3) {
-        self.model = model
+    public init(messages: [ChatMessage], maxTokens: Int = 2_000, temperature: Double = 0.3) {
         self.messages = messages
         self.maxTokens = maxTokens
         self.temperature = temperature

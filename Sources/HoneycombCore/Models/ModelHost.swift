@@ -6,7 +6,7 @@ import Foundation
 public enum ModelPolicy {
     public enum Model: Hashable, Sendable {
         case speech
-        case llm(String)
+        case llm
         case embedder
     }
 
@@ -20,15 +20,12 @@ public enum ModelPolicy {
         let big = ramGB >= 16
         switch model {
         case .speech:
-            var evict = others.filter {
-                if case .llm = $0 { return !(recording && big) }
-                return false
-            }
+            var evict = others.filter { $0 == .llm && !(recording && big) }
             if recording || !big { evict.formUnion(others.filter { $0 == .embedder }) }
             return .load(evicting: evict)
         case .llm:
             if recording && !big { return .refuse }
-            var evict = others.filter { if case .llm = $0 { true } else { false } }
+            var evict: Set<Model> = []
             if !recording { evict.formUnion(others.filter { $0 == .speech }) }
             if !big { evict.formUnion(others.filter { $0 == .embedder }) }
             return .load(evicting: evict)

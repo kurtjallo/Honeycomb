@@ -31,7 +31,7 @@ public struct NoteWriter: Sendable {
         var lastWrite: ContinuousClock.Instant?
         let finish: FinishReason
         do {
-            let request = ChatRequest(model: ModelCatalog.builtInLLM, messages: messages, maxTokens: NotesPrompt.outputTokens)
+            let request = ChatRequest(messages: messages, maxTokens: NotesPrompt.outputTokens)
             finish = try await read(request, for: meetingID) { piece in
                 raw += piece
                 if let lastWrite, ContinuousClock.now - lastWrite < .seconds(1) { return }
@@ -81,7 +81,7 @@ public struct NoteWriter: Sendable {
             var summaries: [String] = []
             for part in NotesPrompt.parts(text, maxTokens: partBudget) {
                 try Task.checkCancellation()
-                let request = ChatRequest(model: ModelCatalog.builtInLLM, messages: [
+                let request = ChatRequest(messages: [
                     ChatMessage(.system, NotesPrompt.partSystem), ChatMessage(.user, part),
                 ], maxTokens: NotesPrompt.outputTokens)
                 var summary = ""
