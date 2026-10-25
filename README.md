@@ -22,7 +22,7 @@ Honeycomb listens to your calls without joining them and writes the notes for yo
 - Shows the transcript line behind every note.
 - Answers questions about one meeting or all of them, even mid-call.
 - Saves each meeting as Markdown in a folder you choose.
-- Writes notes with its built-in AI model. A larger model is an optional download on Macs with 16 GB or more.
+- Writes notes with its built-in AI model.
 
 ## Install
 
