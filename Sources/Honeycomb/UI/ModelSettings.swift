@@ -24,6 +24,7 @@ struct ModelSettings: View {
             }
         }
         .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
         .confirmationDialog("Download \(pendingDownload?.name ?? "the model")?",
                             isPresented: Binding(get: { pendingDownload != nil }, set: { if !$0 { pendingDownload = nil } })) {
             Button("Download") {
