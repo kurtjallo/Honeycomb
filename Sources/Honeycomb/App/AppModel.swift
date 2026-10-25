@@ -20,7 +20,6 @@ final class AppModel {
     private(set) var templates: [TemplateRecord] = BuiltInTemplates.all
     var sourceQuote: SourceQuote?
     private(set) var modelStates: [String: ModelStore.State] = [:]
-    private(set) var notesModel = ModelCatalog.notesModel()
 
     let paths = Paths.standard
     private(set) var store: ModelStore?
@@ -29,7 +28,6 @@ final class AppModel {
     private var recorder: MeetingRecorder?
     private var modelTask: Task<Void, Never>?
     private var detector: CallDetector?
-    private var notesModelChanges = 0
     /// Seconds left before an automatic stop, while the user can still keep recording.
     private(set) var autoStopCountdown: Int?
     private let launchedAt = ContinuousClock.now
@@ -52,7 +50,7 @@ final class AppModel {
             let host = ModelHost(store: store)
             let pipeline = Pipeline(database: database, paths: paths, host: host)
             let writer = NoteWriter(database: database, chat: BuiltInProvider(llm: BuiltInLLM(store: store, host: host)),
-                                    model: { ModelCatalog.notesModel() })
+                                    model: { ModelCatalog.builtInLLM })
             var handlers = Pipeline.Handlers()
             handlers.enhance = { try await writer.write($0) }
             self.store = store
@@ -97,15 +95,8 @@ final class AppModel {
                 try? await store.install(id)
             }
             await pipeline?.nudge()
-            downloadModel(notesModel)
+            downloadModel(ModelCatalog.builtInLLM)
         }
-    }
-
-    func setNotesModel(_ id: String) {
-        UserDefaults.standard.set(id, forKey: ModelCatalog.notesModelKey)
-        notesModel = id
-        notesModelChanges += 1
-        downloadModel(id)
     }
 
     /// A failure lands in `modelStates` as `.failed`, where the Settings row and the meeting banner offer a retry.
@@ -119,19 +110,6 @@ final class AppModel {
                 return
             }
             await pipeline?.nudge()
-        }
-    }
-
-    func downloadLargeModel() {
-        guard let store else { return }
-        let changesAtStart = notesModelChanges
-        Task {
-            do {
-                try await store.install(ModelCatalog.largeLLM)
-            } catch {
-                return
-            }
-            if notesModelChanges == changesAtStart { setNotesModel(ModelCatalog.largeLLM) }
         }
     }
 
@@ -336,7 +314,7 @@ final class AppModel {
     /// One-line status for model downloads, or nil when every needed model is ready.
     var modelActivity: String? {
         let names = [ModelCatalog.parakeet: "speech model", ModelCatalog.builtInLLM: "AI model",
-                     ModelCatalog.embedder: "search model", ModelCatalog.largeLLM: "large AI model"]
+                     ModelCatalog.embedder: "search model"]
         for (id, name) in names.sorted(by: { $0.key < $1.key }) {
             switch modelStates[id] {
             case .downloading(let received, let total):

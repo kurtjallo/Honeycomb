@@ -3,46 +3,19 @@ import SwiftUI
 
 struct ModelSettings: View {
     @Environment(AppModel.self) private var model
-    @State private var pendingDownload: ModelSpec?
-
-    private var choices: [ModelSpec] {
-        [ModelCatalog.builtInLLM, ModelCatalog.largeLLM].filter(ModelDownloadRow.fitsThisMac).compactMap(ModelCatalog.spec)
-    }
 
     var body: some View {
         Form {
             Section {
-                Picker("Notes model", selection: Binding(get: { model.notesModel }, set: { pick($0) })) {
-                    ForEach(choices) { Text($0.name).tag($0.id) }
-                }
                 ModelDownloadRow(id: ModelCatalog.builtInLLM) { model.downloadModel(ModelCatalog.builtInLLM) }
-                ModelDownloadRow(id: ModelCatalog.largeLLM) { model.downloadLargeModel() }
             } header: {
                 Text("Built-in")
             } footer: {
-                Text("The 9B writes better notes but needs more memory. Once it's downloaded, notes use it. It never loads during a recording.")
+                Text("Honeycomb writes your notes with this model, on this Mac.")
             }
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
-        .confirmationDialog("Download \(pendingDownload?.name ?? "the model")?",
-                            isPresented: Binding(get: { pendingDownload != nil }, set: { if !$0 { pendingDownload = nil } })) {
-            Button("Download") {
-                if let pendingDownload { model.setNotesModel(pendingDownload.id) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("It's \(ByteCountFormatter.string(fromByteCount: pendingDownload?.totalBytes ?? 0, countStyle: .file)). "
-                 + "New notes wait until the download finishes.")
-        }
-    }
-
-    private func pick(_ id: String) {
-        if model.modelStates[id] != .ready, let spec = ModelCatalog.spec(id) {
-            pendingDownload = spec
-            return
-        }
-        model.setNotesModel(id)
     }
 }
 
@@ -67,7 +40,6 @@ struct ModelDownloadRow: View {
     }
 
     private var canDownload: Bool {
-        guard Self.fitsThisMac(id) else { return false }
         switch state {
         case .missing, .failed: return true
         default: return false
@@ -78,8 +50,6 @@ struct ModelDownloadRow: View {
         switch state {
         case .ready:
             caption("Ready")
-        case .missing where !Self.fitsThisMac(id):
-            caption("Needs \(spec?.minRAMGB ?? 0) GB of memory. This Mac has \(ModelHost.ramGB) GB.")
         case .missing:
             caption("Not downloaded. \(ByteCountFormatter.string(fromByteCount: spec?.totalBytes ?? 0, countStyle: .file)).")
         case .downloading(let received, let total):
@@ -91,10 +61,6 @@ struct ModelDownloadRow: View {
         case .failed(let code):
             caption("The download failed. \(Self.failureMessage(code))")
         }
-    }
-
-    static func fitsThisMac(_ id: String) -> Bool {
-        (ModelCatalog.spec(id)?.minRAMGB ?? 0) <= ModelHost.ramGB
     }
 
     /// The sentence for a `ModelStore` failure code.
