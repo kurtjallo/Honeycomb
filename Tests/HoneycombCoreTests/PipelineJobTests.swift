@@ -189,14 +189,14 @@ struct PipelineJobTests {
             TranscriptLine(channel: .them, startMs: 0, endMs: 3_000, text: "We'd renew if SSO lands by end of Q1."),
         ], duplicates: [], meeting: meeting.id, engine: "test")
         let streams = CallCounter()
-        let provider = ScriptedChat { _, continuation in
+        let chat = ScriptedChat { _, continuation in
             guard await streams.add() > 1 else {
                 continuation.yield(.text("# Acme renewal\n\n## Summary\n\n- Renews if"))
                 return
             }
             continuation.answer("# Acme renewal\n\n## Summary\n\n- Renews if SSO ships by Q1")
         }
-        let writer = NoteWriter(database: database, chat: provider, model: { "m" })
+        let writer = NoteWriter(database: database, chat: chat, model: { "m" })
         await handle { try await writer.write($0) }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)

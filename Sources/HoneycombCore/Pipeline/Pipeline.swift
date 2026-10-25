@@ -92,13 +92,13 @@ public actor Pipeline {
         wake = nil
     }
 
-    /// A new recording takes priority: model work in progress on this Mac stops and goes back in the queue.
+    /// A new recording takes priority: model work in progress stops and goes back in the queue.
     public func recordingStarted() {
-        guard let current, usesThisMac(current.job.kind) else { return }
+        guard let current, needsModel(current.job.kind) else { return }
         current.task.cancel()
     }
 
-    private func usesThisMac(_ kind: JobKind) -> Bool {
+    private func needsModel(_ kind: JobKind) -> Bool {
         switch kind {
         case .finalizeAudio, .mirrorMarkdown: false
         case .transcribeFinal, .enhance, .index, .sourceLink: true
@@ -145,8 +145,8 @@ public actor Pipeline {
     /// job `current`: a recording that starts at any moment either keeps model jobs from being
     /// claimed or finds the job to cancel in `recordingStarted()`.
     private func claimNextJob() -> (Job, Task<Void, Error>)? {
-        let onThisMac = Set(JobKind.allCases.filter(usesThisMac))
-        guard let job = try? database.claimNextJob(skipping: host.gate.isRecording ? onThisMac : []) else { return nil }
+        let modelJobs = Set(JobKind.allCases.filter(needsModel))
+        guard let job = try? database.claimNextJob(skipping: host.gate.isRecording ? modelJobs : []) else { return nil }
         let task = Task { try await self.perform(job) }
         current = (job, task, false)
         return (job, task)

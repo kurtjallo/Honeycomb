@@ -365,11 +365,11 @@ struct NoteWriterTests {
 
     @Test func aModelThatIsNotReadyAddsNoVersion() async throws {
         let versionsWhenAsked = Recorded<Int>()
-        let provider = ScriptedChat { [database, meeting] _, _ in
+        let chat = ScriptedChat { [database, meeting] _, _ in
             await versionsWhenAsked.add(try database.enhancedNotes(meeting.id).count)
             throw ModelHostError.modelMissing("qwen")
         }
-        await #expect(throws: ModelHostError.modelMissing("qwen")) { try await writer(provider).write(meeting.id) }
+        await #expect(throws: ModelHostError.modelMissing("qwen")) { try await writer(chat).write(meeting.id) }
         #expect(await versionsWhenAsked.values == [0])
     }
 
@@ -476,7 +476,7 @@ struct NoteWriterTests {
     @Test func partSummariesDropReasoningBeforeABareThinkClose() async throws {
         try longCall(minutes: 30)
         let prompts = Recorded<String>()
-        let provider = ScriptedChat { request, continuation in
+        let chat = ScriptedChat { request, continuation in
             if request.messages.first?.content == NotesPrompt.partSystem {
                 continuation.answer("Okay, the user wants bullets.\n</think>\n- [00:05] A point")
             } else {
@@ -484,7 +484,7 @@ struct NoteWriterTests {
                 continuation.answer("# T\n\n- a")
             }
         }
-        try await writer(provider, context: 8_192).write(meeting.id)
+        try await writer(chat, context: 8_192).write(meeting.id)
         let prompt = try #require(await prompts.values.last)
         #expect(prompt.contains("- [00:05] A point"))
         #expect(!prompt.contains("</think>"))
@@ -492,14 +492,14 @@ struct NoteWriterTests {
 
     @Test func aPartSummaryCutOffBeforeAnyTextFails() async throws {
         try longCall(minutes: 30)
-        let provider = ScriptedChat { request, continuation in
+        let chat = ScriptedChat { request, continuation in
             if request.messages.first?.content == NotesPrompt.partSystem {
                 continuation.answer("", .length)
             } else {
                 continuation.answer("# T\n\n- a")
             }
         }
-        await #expect(throws: ChatError.truncated) { try await writer(provider, context: 8_192).write(meeting.id) }
+        await #expect(throws: ChatError.truncated) { try await writer(chat, context: 8_192).write(meeting.id) }
     }
 
     @Test func summariesThatNeverShrinkStopAsTooLong() async throws {
