@@ -44,8 +44,6 @@ extension LocalLLM where Runtime == MLXRuntime {
     }
 }
 
-/// The built-in LLM. It loads through ModelHost, so it never shares memory with a model it shouldn't,
-/// and unloads after 5 idle minutes.
 public actor LocalLLM<Runtime: LLMRuntime> {
     private let store: ModelStore
     private let host: ModelHost
@@ -102,7 +100,6 @@ public actor LocalLLM<Runtime: LLMRuntime> {
         }
     }
 
-    /// Callers that arrive during a load join the same load task.
     private func model() async throws -> Runtime.Model {
         if let loaded { return loaded }
         if let loading { return try await loading.value }
