@@ -137,7 +137,6 @@ public actor ModelHost {
     public func unregister(_ model: ModelPolicy.Model) {
         loaded.remove(model)
         unloadHandlers[model] = nil
-        leases[model] = nil
     }
 
     /// Takes a lease, or throws `.notAllowedNow` if the rules forbid the model right now, even
