@@ -38,10 +38,4 @@ public enum ModelCatalog {
     public static let builtInLLM = "qwen3.5-4b"
     public static let largeLLM = "qwen3.5-9b"
     public static let embedder = "qwen3-embedding-0.6b"
-
-    public static let notesModelKey = "honeycomb.notesModel"
-
-    public static func notesModel(_ defaults: UserDefaults = .standard) -> String {
-        defaults.string(forKey: notesModelKey) ?? builtInLLM
-    }
 }

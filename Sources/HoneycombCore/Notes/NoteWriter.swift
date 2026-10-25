@@ -5,20 +5,16 @@ import Foundation
 public struct NoteWriter: Sendable {
     let database: AppDatabase
     let chat: any ChatProvider
-    let currentModel: @Sendable () -> String
     let contextTokens: Int
 
-    public init(database: AppDatabase, chat: any ChatProvider, model: @escaping @Sendable () -> String,
-                contextTokens: Int = BuiltInProvider.contextTokens) {
+    public init(database: AppDatabase, chat: any ChatProvider, contextTokens: Int = BuiltInProvider.contextTokens) {
         self.database = database
         self.chat = chat
-        self.currentModel = model
         self.contextTokens = contextTokens
     }
 
     public func write(_ meetingID: UUID) async throws {
         guard let meeting = try database.meeting(meetingID) else { return }
-        let model = currentModel()
         let input = NotesPrompt.Meeting(
             title: meeting.title, startedAt: meeting.startAt, durationMs: meeting.durationMs,
             appName: meeting.callAppId.flatMap { id in CallAppCatalog.builtIn.first { $0.bundleId == id }?.name },
@@ -26,16 +22,16 @@ public struct NoteWriter: Sendable {
             userNotes: try database.userNote(meetingID)?.markdown ?? "",
             terms: try database.dictionaryTerms().map(\.term))
         let transcript = NotesPrompt.transcript(try database.transcript(meetingID))
-        let messages = try await prompt(input, transcript: transcript, model: model, meeting: meetingID)
+        let messages = try await prompt(input, transcript: transcript, meeting: meetingID)
 
-        var note = EnhancedNote(meetingId: meetingID, templateId: input.template.id, model: model)
+        var note = EnhancedNote(meetingId: meetingID, templateId: input.template.id, model: ModelCatalog.builtInLLM)
         var raw = ""
         // Nil until the first words arrive. The version is added then, so a model that isn't ready
         // yet leaves nothing behind.
         var lastWrite: ContinuousClock.Instant?
         let finish: FinishReason
         do {
-            let request = ChatRequest(model: model, messages: messages, maxTokens: NotesPrompt.outputTokens)
+            let request = ChatRequest(model: ModelCatalog.builtInLLM, messages: messages, maxTokens: NotesPrompt.outputTokens)
             finish = try await read(request, for: meetingID) { piece in
                 raw += piece
                 if let lastWrite, ContinuousClock.now - lastWrite < .seconds(1) { return }
@@ -72,7 +68,7 @@ public struct NoteWriter: Sendable {
 
     /// Long transcripts that don't fit the model are summarized in parts. The summaries are
     /// summarized again until they fit, because a small context can't hold one round of them.
-    private func prompt(_ input: NotesPrompt.Meeting, transcript: String, model: String, meeting: UUID) async throws -> [ChatMessage] {
+    private func prompt(_ input: NotesPrompt.Meeting, transcript: String, meeting: UUID) async throws -> [ChatMessage] {
         let system = NotesPrompt.system(input)
         let budget = contextTokens - NotesPrompt.outputTokens
         let partBudget = max(1_000, budget - NotesPrompt.estimateTokens(NotesPrompt.partSystem) - 500)
@@ -85,7 +81,7 @@ public struct NoteWriter: Sendable {
             var summaries: [String] = []
             for part in NotesPrompt.parts(text, maxTokens: partBudget) {
                 try Task.checkCancellation()
-                let request = ChatRequest(model: model, messages: [
+                let request = ChatRequest(model: ModelCatalog.builtInLLM, messages: [
                     ChatMessage(.system, NotesPrompt.partSystem), ChatMessage(.user, part),
                 ], maxTokens: NotesPrompt.outputTokens)
                 var summary = ""

@@ -3,7 +3,7 @@ import Testing
 @testable import HoneycombCore
 
 /// A spoken call recorded through the capture path, transcribed by Parakeet, and written up by
-/// `NoteWriter` on `BuiltInProvider` as in `AppModel.launch`, with the model pinned to the 4B.
+/// `NoteWriter` on `BuiltInProvider` as in `AppModel.launch`.
 /// Run with HONEYCOMB_MODEL_TESTS=1.
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["HONEYCOMB_MODEL_TESTS"] == "1"))
 struct EndToEndTests {
@@ -19,8 +19,7 @@ struct EndToEndTests {
         host = ModelHost(store: store, speechIdleUnload: .seconds(1))
         pipeline = Pipeline(database: database, paths: paths, host: host)
         try database.seedBuiltIns()
-        let writer = NoteWriter(database: database, chat: BuiltInProvider(llm: BuiltInLLM(store: store, host: host)),
-                                model: { ModelCatalog.builtInLLM })
+        let writer = NoteWriter(database: database, chat: BuiltInProvider(llm: BuiltInLLM(store: store, host: host)))
         var handlers = Pipeline.Handlers()
         handlers.enhance = { try await writer.write($0) }
         await pipeline.setHandlers(handlers)

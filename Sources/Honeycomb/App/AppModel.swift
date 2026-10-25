@@ -49,8 +49,7 @@ final class AppModel {
             let store = ModelStore(root: paths.models, database: database)
             let host = ModelHost(store: store)
             let pipeline = Pipeline(database: database, paths: paths, host: host)
-            let writer = NoteWriter(database: database, chat: BuiltInProvider(llm: BuiltInLLM(store: store, host: host)),
-                                    model: { ModelCatalog.builtInLLM })
+            let writer = NoteWriter(database: database, chat: BuiltInProvider(llm: BuiltInLLM(store: store, host: host)))
             var handlers = Pipeline.Handlers()
             handlers.enhance = { try await writer.write($0) }
             self.store = store

@@ -196,7 +196,7 @@ struct PipelineJobTests {
             }
             continuation.answer("# Acme renewal\n\n## Summary\n\n- Renews if SSO ships by Q1")
         }
-        let writer = NoteWriter(database: database, chat: chat, model: { "m" })
+        let writer = NoteWriter(database: database, chat: chat)
         await handle { try await writer.write($0) }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)

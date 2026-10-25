@@ -207,7 +207,7 @@ struct NoteWriterTests {
     }
 
     func writer(_ chat: any ChatProvider, context: Int = 32_000) -> NoteWriter {
-        NoteWriter(database: database, chat: chat, model: { "m" }, contextTokens: context)
+        NoteWriter(database: database, chat: chat, contextTokens: context)
     }
 
     @Test func writesNotesAndTitle() async throws {
@@ -383,9 +383,7 @@ struct NoteWriterTests {
     func freshDatabaseWritesNotesWithTheBuiltInModel() async throws {
         let paths = Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID().uuidString)"))
         let pipeline = Pipeline(database: database, paths: paths, host: ModelHost(store: ModelStore(root: paths.models, database: nil)))
-        let noChoice = "notes-\(UUID().uuidString)"
-        let writer = NoteWriter(database: database, chat: FakeChat(chunks: ["# Acme renewal\n\n## Summary\n\n- Renews if SSO ships"]),
-                                model: { ModelCatalog.notesModel(UserDefaults(suiteName: noChoice)!) })
+        let writer = NoteWriter(database: database, chat: FakeChat(chunks: ["# Acme renewal\n\n## Summary\n\n- Renews if SSO ships"]))
         var handlers = Pipeline.Handlers()
         handlers.enhance = { try await writer.write($0) }
         await pipeline.setHandlers(handlers)
@@ -400,37 +398,13 @@ struct NoteWriterTests {
         #expect(settled?.state == .ready)
         let note = try #require(try database.enhancedNotes(meeting.id).first)
         #expect(note.status == .done)
-        #expect(note.model == ModelCatalog.builtInLLM)
-    }
-
-    @Test func notesModelDefaultsTo4BAndHonors9B() async throws {
-        let suite = "notes-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let requested = Recorded<String>()
-        let chat = ScriptedChat { request, continuation in
-            await requested.add(request.model)
-            continuation.answer("# T\n\n- a")
-        }
-        let writer = NoteWriter(database: database, chat: chat, model: { ModelCatalog.notesModel(UserDefaults(suiteName: suite)!) })
-        func currentModel() throws -> String? {
-            let current = try database.meeting(meeting.id)?.currentEnhancedId
-            return try database.enhancedNotes(meeting.id).first { $0.id == current }?.model
-        }
-
-        try await writer.write(meeting.id)
-        #expect(try currentModel() == "qwen3.5-4b")
-        defaults.set(ModelCatalog.largeLLM, forKey: ModelCatalog.notesModelKey)
-        try await writer.write(meeting.id)
-        #expect(try currentModel() == "qwen3.5-9b")
-        #expect(await requested.values == ["qwen3.5-4b", "qwen3.5-9b"])
+        #expect(note.model == "qwen3.5-4b")
     }
 
     @Test func builtInModelStillDownloadingLeavesNoVersion() async throws {
         let store = ModelStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID().uuidString)"),
                                database: nil)
-        let writer = NoteWriter(database: database, chat: BuiltInProvider(llm: BuiltInLLM(store: store, host: ModelHost(store: store))),
-                                model: { ModelCatalog.builtInLLM })
+        let writer = NoteWriter(database: database, chat: BuiltInProvider(llm: BuiltInLLM(store: store, host: ModelHost(store: store))))
         await #expect(throws: ModelHostError.modelMissing(ModelCatalog.builtInLLM)) { try await writer.write(meeting.id) }
         #expect(PipelineError.waitReason(for: ModelHostError.modelMissing(ModelCatalog.builtInLLM)) == .modelMissing)
         #expect(try database.enhancedNotes(meeting.id).isEmpty)
@@ -516,7 +490,7 @@ struct NoteWriterTests {
             await systems.add(request.messages.first?.content ?? "")
             try await builtIn.answer(request, continuation)
         }
-        let writer = NoteWriter(database: database, chat: chat, model: { ModelCatalog.builtInLLM })
+        let writer = NoteWriter(database: database, chat: chat)
 
         try longCall(minutes: 50)
         try await writer.write(meeting.id)
