@@ -94,6 +94,32 @@ struct PipelineJobTests {
         await pipeline.stop()
     }
 
+    @Test func notesARecordingCancelsWaitWhateverTheyThrow() async throws {
+        let calls = CallCounter()
+        await handle { _ in
+            guard await calls.add() == 1 else { return }
+            try? await Task.sleep(for: .seconds(30))
+            throw ChatError.cancelled
+        }
+        await pipeline.start()
+        await pipeline.enqueue(.enhance, meeting: meeting.id)
+        #expect(await eventually { await calls.count == 1 })
+
+        host.gate.set(true)
+        await pipeline.recordingStarted()
+        #expect(try await eventually { try enhanceJob()?.status == .queued }, "the notes wait for the recording")
+        let waiting = try #require(try database.meeting(meeting.id))
+        #expect(waiting.state == .waiting, "the meeting is not failed")
+        #expect(waiting.waitReason == .modelBusy)
+
+        host.gate.set(false)
+        await pipeline.nudge()
+        #expect(try await eventually { try database.meeting(meeting.id)?.state == .ready }, "the notes finish after the recording")
+        #expect(try enhanceJob()?.status == .done)
+        #expect(await calls.count == 2)
+        await pipeline.stop()
+    }
+
     @Test func stopPutsAJobThatIgnoresCancellationBackAtOnce() async throws {
         let latch = Latch()
         await handle { _ in
