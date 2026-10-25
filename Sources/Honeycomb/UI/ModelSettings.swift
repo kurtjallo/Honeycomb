@@ -2,12 +2,10 @@ import HoneycombCore
 import SwiftUI
 
 struct ModelSettings: View {
-    @Environment(AppModel.self) private var model
-
     var body: some View {
         Form {
             Section {
-                ModelDownloadRow(id: ModelCatalog.builtInLLM) { model.downloadModel(ModelCatalog.builtInLLM) }
+                ModelDownloadRow(id: ModelCatalog.builtInLLM)
             } header: {
                 Text("Built-in")
             } footer: {
@@ -23,7 +21,6 @@ struct ModelSettings: View {
 struct ModelDownloadRow: View {
     @Environment(AppModel.self) private var model
     let id: String
-    let download: () -> Void
 
     private var state: ModelStore.State { model.modelStates[id] ?? .missing }
     private var spec: ModelSpec? { ModelCatalog.spec(id) }
@@ -35,7 +32,7 @@ struct ModelDownloadRow: View {
                 status
             }
             Spacer()
-            if canDownload { Button("Download", action: download) }
+            if canDownload { Button("Download") { model.downloadModel(id) } }
         }
     }
 
