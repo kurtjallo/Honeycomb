@@ -102,4 +102,24 @@ struct BuiltInLLMTests {
         for use in uses { #expect(try await use.value == folder) }
         #expect(runtime.events == ["load \(folder)"])
     }
+
+    @Test("a use that joins a load another use cancelled loads the model again")
+    func joinsACancelledLoadThenLoadsAgain() async throws {
+        let llm = try makeLLM()
+        runtime.holdLoads()
+        let cancelled = Task { try await llm.use() }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !runtime.events.contains("load \(folder)"), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        cancelled.cancel()
+        let joining = Task { try await llm.use() }
+        try await Task.sleep(for: .milliseconds(200))
+
+        runtime.releaseLoads()
+
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        #expect(try await joining.value == folder)
+        #expect(runtime.events == ["load \(folder)", "clear", "load \(folder)"], "the second load starts after the first one's cleanup")
+    }
 }
