@@ -16,6 +16,7 @@ public enum ModelPolicy {
     public static func decide(adding model: Model, loaded: Set<Model>, recording: Bool, ramGB: Int) -> Decision {
         let others = loaded.subtracting([model])
         let big = ramGB >= 16
+        // On 16 GB or more, the 4B may stay beside speech during a recording for the planned mid-call questions.
         let llmBesideSpeech = recording && big
         switch model {
         case .speech:
