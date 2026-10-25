@@ -5,7 +5,7 @@ extension ModelCatalog {
         ModelSpec(
             id: "silero-vad", kind: .vad, name: "Silero voice detector",
             repo: "FluidInference/silero-vad-coreml", revision: "b419383c55c110e2c9271fa6ee0ea83d03c70d96",
-            minRAMGB: 0, license: "MIT",
+            license: "MIT",
             credit: "Silero VAD by Silero Team, converted to Core ML by FluidInference.",
             files: [
             ModelFile(path: "silero-vad-unified-256ms-v6.2.1.mlmodelc/analytics/coremldata.bin", size: 243, sha256: "8067594eb3126ab8318af507f0c00cabfed40d5fedb8a0ee5075dd02e903d909"),
@@ -17,7 +17,7 @@ extension ModelCatalog {
         ModelSpec(
             id: "parakeet-tdt-0.6b-v2", kind: .asr, name: "Parakeet speech-to-text (English)",
             repo: "FluidInference/parakeet-tdt-0.6b-v2-coreml", revision: "ee09c569f73759e6d44c9bd16766f477b2b36d39",
-            minRAMGB: 8, license: "CC-BY-4.0",
+            license: "CC-BY-4.0",
             credit: "Parakeet TDT 0.6B v2 by NVIDIA, converted to Core ML by FluidInference.",
             files: [
             ModelFile(path: "Decoder.mlmodelc/analytics/coremldata.bin", size: 243, sha256: "46de1a6fe2e49d19a2125bc91acf020df7f2aea84ba821532aade8427a440b05"),
@@ -45,7 +45,7 @@ extension ModelCatalog {
         ModelSpec(
             id: "qwen3.5-4b", kind: .llm, name: "Qwen3.5 4B",
             repo: "mlx-community/Qwen3.5-4B-MLX-4bit", revision: "32f3e8ecf65426fc3306969496342d504bfa13f3",
-            minRAMGB: 8, license: "Apache-2.0",
+            license: "Apache-2.0",
             credit: "Qwen3.5 by the Qwen team at Alibaba, converted to MLX by mlx-community.",
             files: [
             ModelFile(path: "chat_template.jinja", size: 7756, sha256: "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"),
@@ -59,7 +59,7 @@ extension ModelCatalog {
         ModelSpec(
             id: "qwen3-embedding-0.6b", kind: .embed, name: "Qwen3 Embedding 0.6B",
             repo: "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ", revision: "6c3ae70858513f1a78e9cdca3cae330d9075cd2a",
-            minRAMGB: 8, license: "Apache-2.0",
+            license: "Apache-2.0",
             credit: "Qwen3 Embedding by the Qwen team at Alibaba, converted to MLX by mlx-community.",
             files: [
             ModelFile(path: "added_tokens.json", size: 707, sha256: "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680"),

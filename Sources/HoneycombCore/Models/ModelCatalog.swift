@@ -13,7 +13,6 @@ public struct ModelSpec: Sendable, Identifiable, Equatable {
     public let name: String
     public let repo: String
     public let revision: String
-    public let minRAMGB: Int
     public let license: String
     public let credit: String
     public let files: [ModelFile]
