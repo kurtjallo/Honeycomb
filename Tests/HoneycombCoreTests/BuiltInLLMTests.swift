@@ -122,4 +122,54 @@ struct BuiltInLLMTests {
         #expect(try await joining.value == folder)
         #expect(runtime.events == ["load \(folder)", "clear", "load \(folder)"], "the second load starts after the first one's cleanup")
     }
+
+    @Test("a use cancelled while it waits on another use's load still gets its cancel")
+    func cancelledJoinerDoesNotLoadAgain() async throws {
+        let llm = try makeLLM()
+        runtime.holdLoads()
+        let first = Task { try await llm.use() }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !runtime.events.contains("load \(folder)"), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let joining = Task { try await llm.use() }
+        try await Task.sleep(for: .milliseconds(200))
+        first.cancel()
+        joining.cancel()
+
+        runtime.releaseLoads()
+
+        await #expect(throws: CancellationError.self) { try await first.value }
+        await #expect(throws: CancellationError.self) { try await joining.value }
+        #expect(runtime.events == ["load \(folder)", "clear"])
+    }
+
+    @Test("a use during the reload shares it instead of loading a second copy")
+    func usesDuringTheReloadShareIt() async throws {
+        let llm = try makeLLM()
+        runtime.holdLoads()
+        let cancelled = Task { try await llm.use() }
+        var deadline = ContinuousClock.now + .seconds(3)
+        while !runtime.events.contains("load \(folder)"), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        cancelled.cancel()
+        let joining = Task { try await llm.use() }
+        try await Task.sleep(for: .milliseconds(200))
+        runtime.releaseLoads()
+        runtime.holdLoads()
+        deadline = ContinuousClock.now + .seconds(3)
+        while runtime.events.count < 3, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        let late = Task { try await llm.use() }
+        try await Task.sleep(for: .milliseconds(200))
+
+        runtime.releaseLoads()
+
+        #expect(try await joining.value == folder)
+        #expect(try await late.value == folder)
+        #expect(runtime.events == ["load \(folder)", "clear", "load \(folder)"])
+    }
 }

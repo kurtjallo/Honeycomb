@@ -101,8 +101,15 @@ public actor LocalLLM<Runtime: LLMRuntime> {
     }
 
     private func model() async throws -> Runtime.Model {
+        var cancelledLoad: Task<Runtime.Model, Error>?
+        while loaded == nil, let loading, loading != cancelledLoad {
+            do {
+                return try await loading.value
+            } catch is CancellationError where !Task.isCancelled {
+                cancelledLoad = loading
+            }
+        }
         if let loaded { return loaded }
-        if let loading { return try await loading.value }
         let task = Task { [store, host, runtime] in
             let id = ModelCatalog.builtInLLM
             guard let folder = await store.folder(id) else { throw ModelHostError.modelMissing(id) }
@@ -123,7 +130,7 @@ public actor LocalLLM<Runtime: LLMRuntime> {
             }
         }
         loading = task
-        defer { loading = nil }
+        defer { if loading == task { loading = nil } }
         let model = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
         loaded = model
         runtime.limitCache(recording: host.isRecording)
