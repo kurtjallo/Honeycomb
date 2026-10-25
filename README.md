@@ -32,7 +32,7 @@ Requires an Apple Silicon Mac with 16 GB of memory or more, on macOS 26 or newer
 curl -fsSL https://raw.githubusercontent.com/kurtjallo/Honeycomb/main/install.sh | sh
 ```
 
-Or download the DMG from [Releases](https://github.com/kurtjallo/Honeycomb/releases), then click **Open Anyway** in System Settings → Privacy & Security on first launch. The first launch downloads about 3.2 GB of models.
+Or download the DMG from [Releases](https://github.com/kurtjallo/Honeycomb/releases), then click **Open Anyway** in System Settings → Privacy & Security on first launch. The first launch downloads about 3.5 GB of models.
 
 ## How it works
 
