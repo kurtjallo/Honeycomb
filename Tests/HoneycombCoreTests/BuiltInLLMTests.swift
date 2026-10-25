@@ -48,10 +48,10 @@ struct BuiltInLLMTests {
     let folder = ModelCatalog.spec(ModelCatalog.builtInLLM)!.folderName
 
     /// The store counts a model as downloaded when its folder exists.
-    func makeLLM(idleUnload: Duration = .seconds(300)) throws -> LocalLLM<FakeRuntime> {
+    func makeLLM(host: ModelHost? = nil, idleUnload: Duration = .seconds(300)) throws -> LocalLLM<FakeRuntime> {
         try FileManager.default.createDirectory(at: root.appendingPathComponent(folder), withIntermediateDirectories: true)
         let store = ModelStore(root: root, database: nil)
-        return LocalLLM(store: store, host: ModelHost(store: store), runtime: runtime, idleUnload: idleUnload)
+        return LocalLLM(store: store, host: host ?? ModelHost(store: store), runtime: runtime, idleUnload: idleUnload)
     }
 
     @Test("the model unloads after its last user has been idle for the wait")
@@ -171,5 +171,33 @@ struct BuiltInLLMTests {
         #expect(try await joining.value == folder)
         #expect(try await late.value == folder)
         #expect(runtime.events == ["load \(folder)", "clear", "load \(folder)"])
+    }
+
+    @Test("a use that loads again after a cancelled load holds the model until it is done")
+    func reloadingUseHoldsTheModelUntilDone() async throws {
+        let host = ModelHost(store: ModelStore(root: root, database: nil))
+        let llm = try makeLLM(host: host)
+        runtime.holdLoads()
+        let cancelled = Task { try await llm.use() }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !runtime.events.contains("load \(folder)"), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        cancelled.cancel()
+        let joining = Task { try await llm.use() }
+        try await Task.sleep(for: .milliseconds(200))
+        runtime.releaseLoads()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        #expect(try await joining.value == folder)
+
+        let speech = Task { try await host.register(.speech) {} }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await llm.isLoaded, "speech waits for the use that loaded the model again")
+        #expect(runtime.events == ["load \(folder)", "clear", "load \(folder)"])
+
+        await llm.done()
+        try await speech.value
+        #expect(await !llm.isLoaded)
+        #expect(runtime.events == ["load \(folder)", "clear", "load \(folder)", "clear"], "the model unloads only after that use is done")
     }
 }
