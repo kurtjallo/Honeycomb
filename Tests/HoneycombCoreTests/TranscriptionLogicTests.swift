@@ -169,8 +169,8 @@ struct ModelPolicyTests {
     @Test func oneLargeModelAtATime() {
         #expect(ModelPolicy.decide(adding: .llm("qwen3.5-4b"), loaded: [.speech], recording: false, ramGB: 16)
             == .load(evicting: [.speech]))
-        #expect(ModelPolicy.decide(adding: .speech, loaded: [.llm("qwen3.5-9b")], recording: false, ramGB: 16)
-            == .load(evicting: [.llm("qwen3.5-9b")]))
+        #expect(ModelPolicy.decide(adding: .speech, loaded: [.llm("qwen3.5-4b")], recording: false, ramGB: 16)
+            == .load(evicting: [.llm("qwen3.5-4b")]))
     }
 
     @Test func fourBSitsBesideSpeechDuringACallOn16GB() {
@@ -179,10 +179,6 @@ struct ModelPolicyTests {
         #expect(ModelPolicy.decide(adding: .speech, loaded: [.llm("qwen3.5-4b")], recording: true, ramGB: 16)
             == .load(evicting: []))
         #expect(ModelPolicy.decide(adding: .llm("qwen3.5-4b"), loaded: [.speech], recording: true, ramGB: 8) == .refuse)
-    }
-
-    @Test func nineBNeverLoadsDuringARecording() {
-        #expect(ModelPolicy.decide(adding: .llm("qwen3.5-9b"), loaded: [.speech], recording: true, ramGB: 32) == .refuse)
     }
 
     @Test func embedderRules() {

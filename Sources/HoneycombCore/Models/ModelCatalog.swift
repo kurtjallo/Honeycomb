@@ -36,6 +36,5 @@ public enum ModelCatalog {
     public static let vad = "silero-vad"
     public static let parakeet = "parakeet-tdt-0.6b-v2"
     public static let builtInLLM = "qwen3.5-4b"
-    public static let largeLLM = "qwen3.5-9b"
     public static let embedder = "qwen3-embedding-0.6b"
 }

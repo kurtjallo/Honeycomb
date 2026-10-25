@@ -21,13 +21,13 @@ public enum ModelPolicy {
         switch model {
         case .speech:
             var evict = others.filter {
-                if case .llm(let id) = $0 { return !(recording && big && id == ModelCatalog.builtInLLM) }
+                if case .llm = $0 { return !(recording && big) }
                 return false
             }
             if recording || !big { evict.formUnion(others.filter { $0 == .embedder }) }
             return .load(evicting: evict)
-        case .llm(let id):
-            if recording && (id != ModelCatalog.builtInLLM || !big) { return .refuse }
+        case .llm:
+            if recording && !big { return .refuse }
             var evict = others.filter { if case .llm = $0 { true } else { false } }
             if !recording { evict.formUnion(others.filter { $0 == .speech }) }
             if !big { evict.formUnion(others.filter { $0 == .embedder }) }
