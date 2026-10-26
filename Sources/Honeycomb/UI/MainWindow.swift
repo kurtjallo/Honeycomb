@@ -63,9 +63,6 @@ struct MainWindow: View {
             }
             .sharedBackgroundVisibility(.hidden)
         }
-        .sheet(isPresented: $model.showAIChoice, onDismiss: model.aiChoiceClosed) {
-            AIChoiceView()
-        }
         .alert(item: $model.alert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message))
         }

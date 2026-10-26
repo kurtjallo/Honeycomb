@@ -13,26 +13,22 @@ import urllib.request
 
 MODELS = [
     dict(id="silero-vad", kind="vad", name="Silero voice detector", repo="FluidInference/silero-vad-coreml",
-         include=["silero-vad-unified-256ms-v6.2.1.mlmodelc/*"], min_ram_gb=0,
+         include=["silero-vad-unified-256ms-v6.2.1.mlmodelc/*"],
          license="MIT", credit="Silero VAD by Silero Team, converted to Core ML by FluidInference."),
     dict(id="parakeet-tdt-0.6b-v2", kind="asr", name="Parakeet speech-to-text (English)",
          repo="FluidInference/parakeet-tdt-0.6b-v2-coreml",
          include=["Preprocessor.mlmodelc/*", "Encoder.mlmodelc/*", "Decoder.mlmodelc/*", "JointDecision.mlmodelc/*",
-                  "parakeet_vocab.json"], min_ram_gb=8,
+                  "parakeet_vocab.json"],
          license="CC-BY-4.0", credit="Parakeet TDT 0.6B v2 by NVIDIA, converted to Core ML by FluidInference."),
     dict(id="qwen3.5-4b", kind="llm", name="Qwen3.5 4B", repo="mlx-community/Qwen3.5-4B-MLX-4bit",
          include=["config.json", "model*.safetensors", "model.safetensors.index.json", "tokenizer.json",
                   "tokenizer_config.json", "chat_template.jinja", "vocab.json", "generation_config.json"],
-         min_ram_gb=8, license="Apache-2.0", credit="Qwen3.5 by the Qwen team at Alibaba, converted to MLX by mlx-community."),
-    dict(id="qwen3.5-9b", kind="llm", name="Qwen3.5 9B", repo="mlx-community/Qwen3.5-9B-MLX-4bit",
-         include=["config.json", "model*.safetensors", "model.safetensors.index.json", "tokenizer.json",
-                  "tokenizer_config.json", "chat_template.jinja", "vocab.json", "generation_config.json"],
-         min_ram_gb=16, license="Apache-2.0", credit="Qwen3.5 by the Qwen team at Alibaba, converted to MLX by mlx-community."),
+         license="Apache-2.0", credit="Qwen3.5 by the Qwen team at Alibaba, converted to MLX by mlx-community."),
     dict(id="qwen3-embedding-0.6b", kind="embed", name="Qwen3 Embedding 0.6B",
          repo="mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
          include=["config.json", "model*.safetensors", "model.safetensors.index.json", "tokenizer.json",
                   "tokenizer_config.json", "vocab.json", "merges.txt", "added_tokens.json", "special_tokens_map.json"],
-         min_ram_gb=8, license="Apache-2.0", credit="Qwen3 Embedding by the Qwen team at Alibaba, converted to MLX by mlx-community."),
+         license="Apache-2.0", credit="Qwen3 Embedding by the Qwen team at Alibaba, converted to MLX by mlx-community."),
 ]
 
 
@@ -58,7 +54,7 @@ def entry(model):
     return f'''        ModelSpec(
             id: "{model['id']}", kind: .{model['kind']}, name: "{model['name']}",
             repo: "{model['repo']}", revision: "{revision}",
-            minRAMGB: {model['min_ram_gb']}, license: "{model['license']}",
+            license: "{model['license']}",
             credit: "{model['credit']}",
             files: [
 {chr(10).join(lines)}

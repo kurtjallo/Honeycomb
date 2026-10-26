@@ -50,16 +50,12 @@ public enum BuiltInRecipes {
 }
 
 extension AppDatabase {
-    /// Refreshes built-in templates, recipes, call apps, and the built-in provider. User-made rows are never touched.
     public func seedBuiltIns() throws {
         try writer.write { db in
             for template in BuiltInTemplates.all { try template.save(db) }
             for recipe in BuiltInRecipes.all { try recipe.save(db) }
             for app in CallAppCatalog.builtIn where try CallApp.fetchOne(db, key: app.bundleId) == nil {
                 try app.insert(db)
-            }
-            if try ProviderRecord.fetchOne(db, key: ProviderRecord.builtIn.id) == nil {
-                try ProviderRecord.builtIn.insert(db)
             }
         }
     }

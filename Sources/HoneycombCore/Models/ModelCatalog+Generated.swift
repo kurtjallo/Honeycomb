@@ -5,7 +5,7 @@ extension ModelCatalog {
         ModelSpec(
             id: "silero-vad", kind: .vad, name: "Silero voice detector",
             repo: "FluidInference/silero-vad-coreml", revision: "b419383c55c110e2c9271fa6ee0ea83d03c70d96",
-            minRAMGB: 0, license: "MIT",
+            license: "MIT",
             credit: "Silero VAD by Silero Team, converted to Core ML by FluidInference.",
             files: [
             ModelFile(path: "silero-vad-unified-256ms-v6.2.1.mlmodelc/analytics/coremldata.bin", size: 243, sha256: "8067594eb3126ab8318af507f0c00cabfed40d5fedb8a0ee5075dd02e903d909"),
@@ -17,7 +17,7 @@ extension ModelCatalog {
         ModelSpec(
             id: "parakeet-tdt-0.6b-v2", kind: .asr, name: "Parakeet speech-to-text (English)",
             repo: "FluidInference/parakeet-tdt-0.6b-v2-coreml", revision: "ee09c569f73759e6d44c9bd16766f477b2b36d39",
-            minRAMGB: 8, license: "CC-BY-4.0",
+            license: "CC-BY-4.0",
             credit: "Parakeet TDT 0.6B v2 by NVIDIA, converted to Core ML by FluidInference.",
             files: [
             ModelFile(path: "Decoder.mlmodelc/analytics/coremldata.bin", size: 243, sha256: "46de1a6fe2e49d19a2125bc91acf020df7f2aea84ba821532aade8427a440b05"),
@@ -45,7 +45,7 @@ extension ModelCatalog {
         ModelSpec(
             id: "qwen3.5-4b", kind: .llm, name: "Qwen3.5 4B",
             repo: "mlx-community/Qwen3.5-4B-MLX-4bit", revision: "32f3e8ecf65426fc3306969496342d504bfa13f3",
-            minRAMGB: 8, license: "Apache-2.0",
+            license: "Apache-2.0",
             credit: "Qwen3.5 by the Qwen team at Alibaba, converted to MLX by mlx-community.",
             files: [
             ModelFile(path: "chat_template.jinja", size: 7756, sha256: "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"),
@@ -57,24 +57,9 @@ extension ModelCatalog {
             ModelFile(path: "vocab.json", size: 6722759, sha256: "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"),
             ]),
         ModelSpec(
-            id: "qwen3.5-9b", kind: .llm, name: "Qwen3.5 9B",
-            repo: "mlx-community/Qwen3.5-9B-MLX-4bit", revision: "938d8919941c6e7efd3c7150eff7fe9d12afa631",
-            minRAMGB: 16, license: "Apache-2.0",
-            credit: "Qwen3.5 by the Qwen team at Alibaba, converted to MLX by mlx-community.",
-            files: [
-            ModelFile(path: "chat_template.jinja", size: 7756, sha256: "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"),
-            ModelFile(path: "config.json", size: 3331, sha256: "a96942cb6a8a1d3f1d17514d81a1925d04362a6a3233b389d13012211baaa9f8"),
-            ModelFile(path: "model-00001-of-00002.safetensors", size: 5349771222, sha256: "a68b87558c6ef43f74c2bd63ce7e9092ceddc3101f3def0030774bae5f42aadd"),
-            ModelFile(path: "model-00002-of-00002.safetensors", size: 600449850, sha256: "b0a770bf8469c7f3f18756a0e0283f1c1174344a83e059a4e483f6af4907352d"),
-            ModelFile(path: "model.safetensors.index.json", size: 123592, sha256: "dd023913fb87cfdae27fb11dcf695117c925833796ccac3c64117d6652d8ff1e"),
-            ModelFile(path: "tokenizer.json", size: 19989343, sha256: "87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4"),
-            ModelFile(path: "tokenizer_config.json", size: 1139, sha256: "e98f1901ac6f0adff67b1d540bfa0c36ac1a0cf59eb72ed78146ef89aafa1182"),
-            ModelFile(path: "vocab.json", size: 6722759, sha256: "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"),
-            ]),
-        ModelSpec(
             id: "qwen3-embedding-0.6b", kind: .embed, name: "Qwen3 Embedding 0.6B",
             repo: "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ", revision: "6c3ae70858513f1a78e9cdca3cae330d9075cd2a",
-            minRAMGB: 8, license: "Apache-2.0",
+            license: "Apache-2.0",
             credit: "Qwen3 Embedding by the Qwen team at Alibaba, converted to MLX by mlx-community.",
             files: [
             ModelFile(path: "added_tokens.json", size: 707, sha256: "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680"),

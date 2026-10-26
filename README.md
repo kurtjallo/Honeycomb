@@ -22,17 +22,17 @@ Honeycomb listens to your calls without joining them and writes the notes for yo
 - Shows the transcript line behind every note.
 - Answers questions about one meeting or all of them, even mid-call.
 - Saves each meeting as Markdown in a folder you choose.
-- Runs on its built-in AI model, or on Ollama, LM Studio, or your own API key.
+- Writes notes with its built-in AI model.
 
 ## Install
 
-Requires an Apple Silicon Mac on macOS 26 or newer.
+Requires an Apple Silicon Mac with 16 GB of memory or more, on macOS 26 or newer.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kurtjallo/Honeycomb/main/install.sh | sh
 ```
 
-Or download the DMG from [Releases](https://github.com/kurtjallo/Honeycomb/releases), then click **Open Anyway** in System Settings → Privacy & Security on first launch. The first launch downloads about 3.2 GB of models.
+Or download the DMG from [Releases](https://github.com/kurtjallo/Honeycomb/releases), then click **Open Anyway** in System Settings → Privacy & Security on first launch. The first launch downloads about 3.5 GB of models.
 
 ## How it works
 
@@ -42,7 +42,7 @@ Or download the DMG from [Releases](https://github.com/kurtjallo/Honeycomb/relea
 4. When the call ends, Cohere Transcribe can redo the transcript for higher accuracy. It is an optional download.
 5. A local AI model writes the notes.
 
-Audio never leaves your Mac. Text leaves only if you connect a cloud model.
+Audio, transcripts, and notes never leave your Mac.
 
 ## Development
 

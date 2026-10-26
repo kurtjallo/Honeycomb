@@ -1,12 +1,10 @@
 import Foundation
 
 /// Which local models may be in memory together. Pure, so the rules are tested directly.
-/// One large model at a time (speech or an LLM). The exception: during a recording on a Mac with
-/// 16 GB or more, the built-in 4B may sit beside speech to answer questions.
 public enum ModelPolicy {
     public enum Model: Hashable, Sendable {
         case speech
-        case llm(String)
+        case llm
         case embedder
     }
 
@@ -18,18 +16,16 @@ public enum ModelPolicy {
     public static func decide(adding model: Model, loaded: Set<Model>, recording: Bool, ramGB: Int) -> Decision {
         let others = loaded.subtracting([model])
         let big = ramGB >= 16
+        // On 16 GB or more, the 4B may stay beside speech during a recording for the planned mid-call questions.
+        let llmBesideSpeech = recording && big
         switch model {
         case .speech:
-            var evict = others.filter {
-                if case .llm(let id) = $0 { return !(recording && big && id == ModelCatalog.builtInLLM) }
-                return false
-            }
+            var evict: Set<Model> = llmBesideSpeech ? [] : others.filter { $0 == .llm }
             if recording || !big { evict.formUnion(others.filter { $0 == .embedder }) }
             return .load(evicting: evict)
-        case .llm(let id):
-            if recording && (id != ModelCatalog.builtInLLM || !big) { return .refuse }
-            var evict = others.filter { if case .llm = $0 { true } else { false } }
-            if !recording { evict.formUnion(others.filter { $0 == .speech }) }
+        case .llm:
+            if recording && !big { return .refuse }
+            var evict: Set<Model> = llmBesideSpeech ? [] : others.filter { $0 == .speech }
             if !big { evict.formUnion(others.filter { $0 == .embedder }) }
             return .load(evicting: evict)
         case .embedder:
@@ -141,7 +137,6 @@ public actor ModelHost {
     public func unregister(_ model: ModelPolicy.Model) {
         loaded.remove(model)
         unloadHandlers[model] = nil
-        leases[model] = nil
     }
 
     /// Takes a lease, or throws `.notAllowedNow` if the rules forbid the model right now, even

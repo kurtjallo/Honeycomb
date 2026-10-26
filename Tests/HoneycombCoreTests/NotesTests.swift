@@ -167,18 +167,18 @@ struct AuthorshipTests {
     }
 }
 
+struct ModelFailed: Error, Equatable {}
+
 struct FakeChat: ChatProvider {
     let chunks: [String]
     var finish: FinishReason = .stop
     var failAfter: Int?
 
-    func models() async throws -> [ModelInfo] { [ModelInfo(id: "fake")] }
-
     func stream(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
         AsyncThrowingStream { continuation in
             for (index, chunk) in chunks.enumerated() {
                 if let failAfter, index == failAfter {
-                    continuation.finish(throwing: ProviderError.unreachable)
+                    continuation.finish(throwing: ModelFailed())
                     return
                 }
                 continuation.yield(.text(chunk))
@@ -206,23 +206,18 @@ struct NoteWriterTests {
         ], duplicates: [], meeting: meeting.id, engine: "test")
     }
 
-    func writer(_ provider: any ChatProvider, local: Bool = true, context: Int = 32_000) -> NoteWriter {
-        NoteWriter(database: database) { _ in
-            ResolvedProvider(record: ProviderRecord(id: local ? "builtin" : "openai", name: "x", kind: local ? .builtin : .openAICompatible,
-                                                    contextTokens: context, isLocal: local),
-                             model: "m", provider: provider)
-        }
+    func writer(_ chat: any ChatProvider, context: Int = 32_000) -> NoteWriter {
+        NoteWriter(database: database, chat: chat, contextTokens: context)
     }
 
     @Test func writesNotesAndTitle() async throws {
         let output = ["# Acme renewal", " hinges on SSO\n\n## Summary\n\n- Acme renews if SSO ships by Q1\n\n", "## Next steps\n\n- [ ] Send the pricing deck"]
-        let outcome = try await writer(FakeChat(chunks: output)).write(meeting.id)
-        guard case .written(let id) = outcome else { Issue.record("not written"); return }
+        try await writer(FakeChat(chunks: output)).write(meeting.id)
         let saved = try #require(try database.meeting(meeting.id))
-        #expect(saved.currentEnhancedId == id)
         #expect(saved.title == "Acme renewal hinges on SSO")
         #expect(saved.titleSource == .ai)
         let note = try #require(try database.enhancedNotes(meeting.id).first)
+        #expect(saved.currentEnhancedId == note.id)
         #expect(note.status == .done)
         #expect(note.markdown.hasPrefix("## Summary"))
         let doc = try #require(note.doc.flatMap(PMNode.decode))
@@ -235,7 +230,7 @@ struct NoteWriterTests {
         renamed.title = "Acme QBR"
         renamed.titleSource = .user
         try database.save(renamed)
-        _ = try await writer(FakeChat(chunks: ["# Something else\n\n## Summary\n\n- x"])).write(meeting.id)
+        try await writer(FakeChat(chunks: ["# Something else\n\n## Summary\n\n- x"])).write(meeting.id)
         #expect(try database.meeting(meeting.id)?.title == "Acme QBR")
     }
 
@@ -247,7 +242,7 @@ struct NoteWriterTests {
         for _ in 0..<50 {
             let meeting = Meeting(title: "Zoom call", state: .writingNotes)
             try pool.insert(meeting)
-            var note = EnhancedNote(meetingId: meeting.id, templateId: "general", providerId: "builtin", model: "m")
+            var note = EnhancedNote(meetingId: meeting.id, templateId: "general", model: "m")
             note.status = .done
             let finished = note
             async let notes: Void = Task.detached { try pool.finishEnhanced(finished, suggestedTitle: "AI title") }.value
@@ -271,21 +266,21 @@ struct NoteWriterTests {
     }
 
     @Test func aFirstLineThatIsASectionIsNotTheTitle() async throws {
-        _ = try await writer(FakeChat(chunks: ["# Summary\n\n- Acme renews if SSO ships by Q1"])).write(meeting.id)
+        try await writer(FakeChat(chunks: ["# Summary\n\n- Acme renews if SSO ships by Q1"])).write(meeting.id)
         #expect(try database.meeting(meeting.id)?.title == meeting.title)
         #expect(try database.enhancedNotes(meeting.id).first?.markdown == "# Summary\n\n- Acme renews if SSO ships by Q1")
     }
 
     @Test func reasoningBeforeABareThinkCloseIsDropped() async throws {
         let answer = ["Okay, the user wants notes.\n</thi", "nk>\n\n# Acme renewal\n\n## Summary\n\n- a"]
-        _ = try await writer(FakeChat(chunks: answer)).write(meeting.id)
+        try await writer(FakeChat(chunks: answer)).write(meeting.id)
         #expect(try database.meeting(meeting.id)?.title == "Acme renewal")
         #expect(try database.enhancedNotes(meeting.id).first?.markdown == "## Summary\n\n- a")
     }
 
     @Test("an answer wrapped in a code fence is saved as notes with its title", arguments: ["```", "```markdown", "```md"])
     func aFencedAnswerIsNotes(fence: String) async throws {
-        _ = try await writer(FakeChat(chunks: ["\(fence)\n# Acme renewal\n\n## Summary\n\n- SSO by Q1\n```"])).write(meeting.id)
+        try await writer(FakeChat(chunks: ["\(fence)\n# Acme renewal\n\n## Summary\n\n- SSO by Q1\n```"])).write(meeting.id)
         #expect(try database.meeting(meeting.id)?.title == "Acme renewal")
         let note = try #require(try database.enhancedNotes(meeting.id).first)
         #expect(note.markdown == "## Summary\n\n- SSO by Q1")
@@ -294,7 +289,7 @@ struct NoteWriterTests {
 
     @Test func typedNotesDriveAuthorship() async throws {
         try database.saveUserNote(UserNote(meetingId: meeting.id, doc: nil, markdown: "acme renews if SSO by Q1"))
-        _ = try await writer(FakeChat(chunks: ["# T\n\n## Summary\n\nAcme renews if SSO ships by Q1.\n\nThey asked about seats."])).write(meeting.id)
+        try await writer(FakeChat(chunks: ["# T\n\n## Summary\n\nAcme renews if SSO ships by Q1.\n\nThey asked about seats."])).write(meeting.id)
         let doc = try #require(try database.enhancedNotes(meeting.id).first?.doc.flatMap(PMNode.decode))
         let paragraphs = (doc.content ?? []).filter { $0.type == "paragraph" }
         #expect(paragraphs[0].content?.first?.marks == nil)
@@ -302,33 +297,22 @@ struct NoteWriterTests {
     }
 
     @Test func failureMarksTheVersionFailed() async throws {
-        await #expect(throws: ProviderError.unreachable) {
-            _ = try await writer(FakeChat(chunks: ["# T", "x", "y"], failAfter: 2)).write(meeting.id)
+        await #expect(throws: ModelFailed()) {
+            try await writer(FakeChat(chunks: ["# T", "x", "y"], failAfter: 2)).write(meeting.id)
         }
         #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
     }
 
     @Test func aFailedVersionKeepsEveryWordThatArrived() async throws {
-        await #expect(throws: ProviderError.unreachable) {
-            _ = try await writer(FakeChat(chunks: ["# T\n\n## Summary\n", "- a", "x"], failAfter: 2)).write(meeting.id)
+        await #expect(throws: ModelFailed()) {
+            try await writer(FakeChat(chunks: ["# T\n\n## Summary\n", "- a", "x"], failAfter: 2)).write(meeting.id)
         }
         #expect(try database.enhancedNotes(meeting.id).first?.markdown == "## Summary\n- a")
     }
 
-    @Test func cloudNeedsConsentOnce() async throws {
-        let outcome = try await writer(FakeChat(chunks: ["# T"]), local: false).write(meeting.id)
-        #expect(outcome == .waiting(.cloudConsent))
-        try database.saveProvider(ProviderRecord(id: "openai", name: "OpenAI", kind: .openAICompatible, contextTokens: 128_000, isLocal: false))
-        try database.grantCloudConsent("openai")
-        guard case .written = try await writer(FakeChat(chunks: ["# T\n\n- a"]), local: false).write(meeting.id) else {
-            Issue.record("not written")
-            return
-        }
-    }
-
     @Test func truncatedNotesAreFlagged() async throws {
-        _ = try await writer(FakeChat(chunks: ["# T\n\n- a"], finish: .length)).write(meeting.id)
+        try await writer(FakeChat(chunks: ["# T\n\n- a"], finish: .length)).write(meeting.id)
         let note = try #require(try database.enhancedNotes(meeting.id).first)
         #expect(note.status == .done)
         #expect(note.errorCode == "truncated")
@@ -336,24 +320,20 @@ struct NoteWriterTests {
     }
 
     @Test func aTitleOnlyAnswerCutOffAtItsLimitFailsAndKeepsTheEarlierNotes() async throws {
-        guard case .written(let good) = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) else {
-            Issue.record("not written")
-            return
-        }
-        await #expect(throws: ProviderError.truncated) {
-            _ = try await writer(FakeChat(chunks: ["# Acme renewal"], finish: .length)).write(meeting.id)
+        try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id)
+        let good = try #require(try database.meeting(meeting.id)?.currentEnhancedId)
+        await #expect(throws: ChatError.truncated) {
+            try await writer(FakeChat(chunks: ["# Acme renewal"], finish: .length)).write(meeting.id)
         }
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == good)
         #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
     }
 
     @Test func anAnswerCutOffWhileStillReasoningFailsAndKeepsTheEarlierNotes() async throws {
-        guard case .written(let good) = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) else {
-            Issue.record("not written")
-            return
-        }
-        await #expect(throws: ProviderError.truncated) {
-            _ = try await writer(FakeChat(chunks: ["Okay, let me look at the transcript. The customer said"], finish: .length))
+        try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id)
+        let good = try #require(try database.meeting(meeting.id)?.currentEnhancedId)
+        await #expect(throws: ChatError.truncated) {
+            try await writer(FakeChat(chunks: ["Okay, let me look at the transcript. The customer said"], finish: .length))
                 .write(meeting.id)
         }
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == good)
@@ -361,14 +341,14 @@ struct NoteWriterTests {
     }
 
     @Test func notesCutOffAfterTheirFirstSectionAreKept() async throws {
-        _ = try await writer(FakeChat(chunks: ["## Summary\n\n- Acme renews if SSO ships"], finish: .length)).write(meeting.id)
+        try await writer(FakeChat(chunks: ["## Summary\n\n- Acme renews if SSO ships"], finish: .length)).write(meeting.id)
         let note = try #require(try database.enhancedNotes(meeting.id).first)
         #expect(note.status == .done)
         #expect(note.errorCode == "truncated")
     }
 
     @Test func anEmptyAnswerFails() async throws {
-        await #expect(throws: ProviderError.truncated) { _ = try await writer(FakeChat(chunks: [])).write(meeting.id) }
+        await #expect(throws: ChatError.truncated) { try await writer(FakeChat(chunks: [])).write(meeting.id) }
         #expect(try database.meeting(meeting.id)?.currentEnhancedId == nil)
     }
 
@@ -379,24 +359,55 @@ struct NoteWriterTests {
                 BEGIN SELECT RAISE(ABORT, 'disk full'); END
                 """)
         }
-        await #expect(throws: (any Error).self) { _ = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) }
+        await #expect(throws: (any Error).self) { try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id) }
         #expect(try database.enhancedNotes(meeting.id).first?.status == .failed)
     }
 
     @Test func aModelThatIsNotReadyAddsNoVersion() async throws {
         let versionsWhenAsked = Recorded<Int>()
-        let provider = ScriptedChat { [database, meeting] _, _ in
+        let chat = ScriptedChat { [database, meeting] _, _ in
             await versionsWhenAsked.add(try database.enhancedNotes(meeting.id).count)
             throw ModelHostError.modelMissing("qwen")
         }
-        await #expect(throws: ModelHostError.modelMissing("qwen")) { try await writer(provider).write(meeting.id) }
+        await #expect(throws: ModelHostError.modelMissing("qwen")) { try await writer(chat).write(meeting.id) }
         #expect(await versionsWhenAsked.values == [0])
     }
 
     @Test func aMeetingWaitingForTheModelShowsWritingOnceItAnswers() async throws {
         try database.setState(meeting.id, .waiting, detail: WaitReason.modelMissing.rawValue)
-        _ = try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id)
+        try await writer(FakeChat(chunks: ["# T\n\n- a"])).write(meeting.id)
         #expect(try database.meeting(meeting.id)?.state == .writingNotes)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func freshDatabaseWritesNotesWithTheBuiltInModel() async throws {
+        let paths = Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID().uuidString)"))
+        let pipeline = Pipeline(database: database, paths: paths, host: ModelHost(store: ModelStore(root: paths.models, database: nil)))
+        let writer = NoteWriter(database: database, chat: FakeChat(chunks: ["# Acme renewal\n\n## Summary\n\n- Renews if SSO ships"]))
+        var handlers = Pipeline.Handlers()
+        handlers.enhance = { try await writer.write($0) }
+        await pipeline.setHandlers(handlers)
+        await pipeline.start()
+        await pipeline.enhanceAnyway(meeting.id)
+        var settled: Meeting?
+        for try await update in database.meetingUpdates(meeting.id) where [.ready, .waiting, .failed].contains(update?.state) {
+            settled = update
+            break
+        }
+        await pipeline.stop()
+        #expect(settled?.state == .ready)
+        let note = try #require(try database.enhancedNotes(meeting.id).first)
+        #expect(note.status == .done)
+        #expect(note.model == "qwen3.5-4b")
+    }
+
+    @Test func builtInModelStillDownloadingLeavesNoVersion() async throws {
+        let store = ModelStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID().uuidString)"),
+                               database: nil)
+        let writer = NoteWriter(database: database, chat: BuiltInProvider(llm: BuiltInLLM(store: store, host: ModelHost(store: store))))
+        await #expect(throws: ModelHostError.modelMissing(ModelCatalog.builtInLLM)) { try await writer.write(meeting.id) }
+        #expect(PipelineError.waitReason(for: ModelHostError.modelMissing(ModelCatalog.builtInLLM)) == .modelMissing)
+        #expect(try database.enhancedNotes(meeting.id).isEmpty)
     }
 
     func longCall(minutes: Int) throws {
@@ -413,7 +424,7 @@ struct NoteWriterTests {
     func smallModel(context: Int, summaryFinish: FinishReason = .stop) -> ScriptedChat {
         ScriptedChat { request, continuation in
             guard NotesPrompt.estimateTokens(request.messages.map(\.content).joined()) <= context - request.maxTokens else {
-                throw ProviderError.contextTooLong
+                throw ChatError.contextTooLong
             }
             if request.messages.first?.content == NotesPrompt.partSystem {
                 let bullet = "- [00:05] A point about the renewal, the security review, and the pricing deck.\n"
@@ -426,20 +437,20 @@ struct NoteWriterTests {
 
     @Test func anHourLongCallFitsASmallModel() async throws {
         try longCall(minutes: 60)
-        _ = try await writer(smallModel(context: 8_192), context: 8_192).write(meeting.id)
+        try await writer(smallModel(context: 8_192), context: 8_192).write(meeting.id)
         #expect(try database.enhancedNotes(meeting.id).first?.status == .done)
     }
 
     @Test func aCutOffPartSummaryIsKept() async throws {
         try longCall(minutes: 30)
-        _ = try await writer(smallModel(context: 8_192, summaryFinish: .length), context: 8_192).write(meeting.id)
+        try await writer(smallModel(context: 8_192, summaryFinish: .length), context: 8_192).write(meeting.id)
         #expect(try database.enhancedNotes(meeting.id).first?.status == .done)
     }
 
     @Test func partSummariesDropReasoningBeforeABareThinkClose() async throws {
         try longCall(minutes: 30)
         let prompts = Recorded<String>()
-        let provider = ScriptedChat { request, continuation in
+        let chat = ScriptedChat { request, continuation in
             if request.messages.first?.content == NotesPrompt.partSystem {
                 continuation.answer("Okay, the user wants bullets.\n</think>\n- [00:05] A point")
             } else {
@@ -447,7 +458,7 @@ struct NoteWriterTests {
                 continuation.answer("# T\n\n- a")
             }
         }
-        _ = try await writer(provider, context: 8_192).write(meeting.id)
+        try await writer(chat, context: 8_192).write(meeting.id)
         let prompt = try #require(await prompts.values.last)
         #expect(prompt.contains("- [00:05] A point"))
         #expect(!prompt.contains("</think>"))
@@ -455,21 +466,46 @@ struct NoteWriterTests {
 
     @Test func aPartSummaryCutOffBeforeAnyTextFails() async throws {
         try longCall(minutes: 30)
-        let provider = ScriptedChat { request, continuation in
+        let chat = ScriptedChat { request, continuation in
             if request.messages.first?.content == NotesPrompt.partSystem {
                 continuation.answer("", .length)
             } else {
                 continuation.answer("# T\n\n- a")
             }
         }
-        await #expect(throws: ProviderError.truncated) { _ = try await writer(provider, context: 8_192).write(meeting.id) }
+        await #expect(throws: ChatError.truncated) { try await writer(chat, context: 8_192).write(meeting.id) }
     }
 
     @Test func summariesThatNeverShrinkStopAsTooLong() async throws {
         try longCall(minutes: 30)
-        await #expect(throws: ProviderError.contextTooLong) {
-            _ = try await writer(smallModel(context: 4_096), context: 4_096).write(meeting.id)
+        await #expect(throws: ChatError.contextTooLong) {
+            try await writer(smallModel(context: 4_096), context: 4_096).write(meeting.id)
         }
+    }
+
+    @Test func chunkBudgetComesFromTheBuiltInContext() async throws {
+        let builtIn = smallModel(context: BuiltInProvider.contextTokens)
+        let systems = Recorded<String>()
+        let chat = ScriptedChat { request, continuation in
+            await systems.add(request.messages.first?.content ?? "")
+            try await builtIn.answer(request, continuation)
+        }
+        let writer = NoteWriter(database: database, chat: chat)
+
+        try longCall(minutes: 50)
+        try await writer.write(meeting.id)
+        #expect(await !systems.values.contains(NotesPrompt.partSystem), "50 minutes fit in one pass")
+        try longCall(minutes: 120)
+        try await writer.write(meeting.id)
+        #expect(await systems.values.contains(NotesPrompt.partSystem), "two hours are summarized in parts")
+        #expect(try database.enhancedNotes(meeting.id).map(\.status) == [.done, .done], "every request fit the context")
+    }
+
+    @Test func storedErrorCodesReadBack() {
+        #expect(ChatError(rawValue: "truncated") == .truncated)
+        #expect(ChatError(rawValue: "context_too_long") == .contextTooLong)
+        #expect(ChatError(rawValue: "cancelled") == .cancelled)
+        #expect(ChatError(rawValue: "job_failed") == nil)
     }
 }
 
@@ -490,8 +526,6 @@ actor Recorded<Value: Sendable> {
 struct ScriptedChat: ChatProvider {
     let answer: @Sendable (ChatRequest, AsyncThrowingStream<ChatDelta, Error>.Continuation) async throws -> Void
 
-    func models() async throws -> [ModelInfo] { [] }
-
     func stream(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -510,40 +544,5 @@ extension AsyncThrowingStream<ChatDelta, Error>.Continuation {
         yield(.text(text))
         yield(.finished(reason))
         finish()
-    }
-}
-
-struct CountingChat: ChatProvider {
-    let counter: CallCounter
-    func models() async throws -> [ModelInfo] { [] }
-    func stream(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
-        let counter = counter
-        let size = NotesPrompt.estimateTokens(request.messages.map(\.content).joined())
-        return AsyncThrowingStream { continuation in
-            Task {
-                await counter.add()
-                if size > 8_000 - NotesPrompt.outputTokens {
-                    continuation.finish(throwing: ProviderError.contextTooLong)
-                    return
-                }
-                continuation.yield(.text("# T\n\n- [00:05] point"))
-                continuation.yield(.finished(.stop))
-                continuation.finish()
-            }
-        }
-    }
-}
-
-/// Uses the real login keychain. Run with HONEYCOMB_KEYCHAIN_TESTS=1.
-@Suite(.enabled(if: ProcessInfo.processInfo.environment["HONEYCOMB_KEYCHAIN_TESTS"] == "1"))
-struct KeychainTests {
-    @Test func storesAndDeletesKeys() throws {
-        let keychain = Keychain(service: "io.github.kurtjallo.Honeycomb.tests.\(UUID().uuidString)")
-        try keychain.set("sk-one", account: "openai")
-        #expect(try keychain.read(account: "openai") == "sk-one")
-        try keychain.set("sk-two", account: "openai")
-        #expect(try keychain.read(account: "openai") == "sk-two")
-        keychain.deleteAll()
-        #expect(try keychain.read(account: "openai") == nil)
     }
 }

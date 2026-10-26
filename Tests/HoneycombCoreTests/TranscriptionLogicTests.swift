@@ -167,30 +167,26 @@ struct ModelPolicyTests {
     typealias M = ModelPolicy.Model
 
     @Test func oneLargeModelAtATime() {
-        #expect(ModelPolicy.decide(adding: .llm("qwen3.5-4b"), loaded: [.speech], recording: false, ramGB: 16)
+        #expect(ModelPolicy.decide(adding: .llm, loaded: [.speech], recording: false, ramGB: 16)
             == .load(evicting: [.speech]))
-        #expect(ModelPolicy.decide(adding: .speech, loaded: [.llm("qwen3.5-9b")], recording: false, ramGB: 16)
-            == .load(evicting: [.llm("qwen3.5-9b")]))
+        #expect(ModelPolicy.decide(adding: .speech, loaded: [.llm], recording: false, ramGB: 16)
+            == .load(evicting: [.llm]))
     }
 
     @Test func fourBSitsBesideSpeechDuringACallOn16GB() {
-        #expect(ModelPolicy.decide(adding: .llm("qwen3.5-4b"), loaded: [.speech], recording: true, ramGB: 16)
+        #expect(ModelPolicy.decide(adding: .llm, loaded: [.speech], recording: true, ramGB: 16)
             == .load(evicting: []))
-        #expect(ModelPolicy.decide(adding: .speech, loaded: [.llm("qwen3.5-4b")], recording: true, ramGB: 16)
+        #expect(ModelPolicy.decide(adding: .speech, loaded: [.llm], recording: true, ramGB: 16)
             == .load(evicting: []))
-        #expect(ModelPolicy.decide(adding: .llm("qwen3.5-4b"), loaded: [.speech], recording: true, ramGB: 8) == .refuse)
-    }
-
-    @Test func nineBNeverLoadsDuringARecording() {
-        #expect(ModelPolicy.decide(adding: .llm("qwen3.5-9b"), loaded: [.speech], recording: true, ramGB: 32) == .refuse)
+        #expect(ModelPolicy.decide(adding: .llm, loaded: [.speech], recording: true, ramGB: 8) == .refuse)
     }
 
     @Test func embedderRules() {
         #expect(ModelPolicy.decide(adding: .embedder, loaded: [.speech], recording: true, ramGB: 32) == .refuse)
-        #expect(ModelPolicy.decide(adding: .embedder, loaded: [.llm("qwen3.5-4b")], recording: false, ramGB: 16)
+        #expect(ModelPolicy.decide(adding: .embedder, loaded: [.llm], recording: false, ramGB: 16)
             == .load(evicting: []))
-        #expect(ModelPolicy.decide(adding: .embedder, loaded: [.llm("qwen3.5-4b")], recording: false, ramGB: 8)
-            == .load(evicting: [.llm("qwen3.5-4b")]))
+        #expect(ModelPolicy.decide(adding: .embedder, loaded: [.llm], recording: false, ramGB: 8)
+            == .load(evicting: [.llm]))
         #expect(ModelPolicy.decide(adding: .speech, loaded: [.embedder], recording: true, ramGB: 16)
             == .load(evicting: [.embedder]))
     }

@@ -21,7 +21,7 @@ struct PipelineJobTests {
         try database.insert(meeting)
     }
 
-    func handle(_ enhance: @escaping @Sendable (UUID) async throws -> NoteWriter.Outcome) async {
+    func handle(_ enhance: @escaping @Sendable (UUID) async throws -> Void) async {
         var handlers = Pipeline.Handlers()
         handlers.enhance = enhance
         await pipeline.setHandlers(handlers)
@@ -45,7 +45,6 @@ struct PipelineJobTests {
         await handle { _ in
             await calls.add()
             try await Task.sleep(for: .seconds(30))
-            return .written(UUID())
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -62,7 +61,6 @@ struct PipelineJobTests {
         let calls = CallCounter()
         await handle { _ in
             await calls.add()
-            return .written(UUID())
         }
         await pipeline.start()
         host.gate.set(true)
@@ -77,23 +75,13 @@ struct PipelineJobTests {
         await pipeline.stop()
     }
 
-    func routeNotes(to baseURL: String) throws {
-        try database.saveProvider(ProviderRecord(id: "server", name: "Server", kind: .openAICompatible, baseUrl: baseURL,
-                                                 contextTokens: 32_000, isLocal: false))
-        try database.saveRoute(Route(task: .enhance, providerId: "server", model: "m"))
-    }
-
-    @Test(arguments: [("https://api.openai.com/v1", false), ("http://192.168.1.20:11434/v1", false),
-                      ("http://localhost:11434/v1", true), ("http://127.0.0.1:1234/v1", true), ("http://[::1]:11434/v1", true)])
-    func aRecordingStopsNotesOnlyWhenTheyRunOnThisMac(baseURL: String, onThisMac: Bool) async throws {
-        try routeNotes(to: baseURL)
+    @Test func aRecordingAlwaysPausesNotes() async throws {
         let calls = CallCounter()
         let release = AsyncStream<Void>.makeStream()
         await handle { _ in
             await calls.add()
             for await _ in release.stream { break }
             try Task.checkCancellation()
-            return .written(UUID())
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -102,51 +90,50 @@ struct PipelineJobTests {
         host.gate.set(true)
         await pipeline.recordingStarted()
         release.continuation.yield()
-        if onThisMac {
-            #expect(try await eventually { try enhanceJob()?.status == .queued }, "the notes wait for the recording")
-        } else {
-            #expect(try await eventually { try enhanceJob()?.status == .done }, "the notes finish during the recording")
-            #expect(try database.meeting(meeting.id)?.state == .indexing)
-        }
+        #expect(try await eventually { try enhanceJob()?.status == .queued }, "the notes wait for the recording")
         await pipeline.stop()
     }
 
-    @Test func aRecordingStopsBuiltInNotesEvenAfterTheRouteMovesToTheCloud() async throws {
+    @Test func notesARecordingCancelsWaitWhateverTheyThrow() async throws {
         let calls = CallCounter()
-        let preempted = CallCounter()
         await handle { _ in
-            guard await calls.add() == 1 else { return .written(UUID()) }
-            do { try await Task.sleep(for: .seconds(30)) } catch { await preempted.add(); throw error }
-            return .written(UUID())
+            guard await calls.add() == 1 else { return }
+            try? await Task.sleep(for: .seconds(30))
+            throw ChatError.cancelled
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
         #expect(await eventually { await calls.count == 1 })
 
-        try routeNotes(to: "https://api.openai.com/v1")
         host.gate.set(true)
         await pipeline.recordingStarted()
-        #expect(await eventually { await preempted.count == 1 }, "the built-in job that runs stops for the recording")
+        #expect(try await eventually { try enhanceJob()?.status == .queued }, "the notes wait for the recording")
+        let waiting = try #require(try database.meeting(meeting.id))
+        #expect(waiting.state == .waiting, "the meeting is not failed")
+        #expect(waiting.waitReason == .modelBusy)
+
+        host.gate.set(false)
+        await pipeline.nudge()
+        #expect(try await eventually { try database.meeting(meeting.id)?.state == .ready }, "the notes finish after the recording")
+        #expect(try enhanceJob()?.status == .done)
+        #expect(await calls.count == 2)
         await pipeline.stop()
     }
 
-    @Test(arguments: ["http://0.0.0.0:11434/v1", "http://localhost.:11434/v1", "http://LOCALHOST:11434/v1"])
-    func serversOnThisMacCountAsThisMac(baseURL: String) {
-        let record = ProviderRecord(id: "s", name: "s", kind: .openAICompatible, baseUrl: baseURL, contextTokens: 1, isLocal: false)
-        #expect(Pipeline.runsOnThisMac(record))
-    }
-
-    @Test func notesOnAnotherMachineStartDuringARecording() async throws {
-        try routeNotes(to: "https://api.openai.com/v1")
+    @Test func aPromptTooLongForTheModelFailsWithoutARetry() async throws {
         let calls = CallCounter()
         await handle { _ in
             await calls.add()
-            return .written(UUID())
+            throw ChatError.contextTooLong
         }
-        host.gate.set(true)
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
-        #expect(await eventually { await calls.count == 1 })
+        #expect(try await eventually { try database.meeting(meeting.id)?.state == .failed })
+        let failed = try #require(try database.meeting(meeting.id))
+        #expect(failed.stateDetail == "context_too_long")
+        #expect(try enhanceJob()?.status == .failed)
+        #expect(try enhanceJob()?.attempt == 1)
+        #expect(await calls.count == 1)
         await pipeline.stop()
     }
 
@@ -154,7 +141,6 @@ struct PipelineJobTests {
         let latch = Latch()
         await handle { _ in
             await latch.wait()
-            return .written(UUID())
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -190,8 +176,7 @@ struct PipelineJobTests {
     @Test func aFailedJobRetriesAfterThePolicyDelay() async throws {
         let calls = CallCounter()
         await handle { _ in
-            if await calls.add() == 1 { throw ProviderError.unreachable }
-            return .written(UUID())
+            if await calls.add() == 1 { throw ModelFailed() }
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -204,17 +189,14 @@ struct PipelineJobTests {
             TranscriptLine(channel: .them, startMs: 0, endMs: 3_000, text: "We'd renew if SSO lands by end of Q1."),
         ], duplicates: [], meeting: meeting.id, engine: "test")
         let streams = CallCounter()
-        let provider = ScriptedChat { _, continuation in
+        let chat = ScriptedChat { _, continuation in
             guard await streams.add() > 1 else {
                 continuation.yield(.text("# Acme renewal\n\n## Summary\n\n- Renews if"))
                 return
             }
             continuation.answer("# Acme renewal\n\n## Summary\n\n- Renews if SSO ships by Q1")
         }
-        let writer = NoteWriter(database: database) { _ in
-            ResolvedProvider(record: ProviderRecord(id: "builtin", name: "x", kind: .builtin, contextTokens: 32_000, isLocal: true),
-                             model: "m", provider: provider)
-        }
+        let writer = NoteWriter(database: database, chat: chat)
         await handle { try await writer.write($0) }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)
@@ -238,7 +220,7 @@ struct PipelineJobTests {
     }
 
     @Test func launchCancelsNotesLeftGenerating() async throws {
-        try database.saveEnhanced(EnhancedNote(meetingId: meeting.id, templateId: nil, providerId: nil, model: nil))
+        try database.saveEnhanced(EnhancedNote(meetingId: meeting.id, templateId: nil, model: nil))
         await pipeline.start()
         await pipeline.stop()
         #expect(try database.enhancedNotes(meeting.id).map(\.status) == [.canceled])
@@ -260,14 +242,12 @@ struct PipelineJobTests {
         #expect(failed.stateDetail == "crashed")
     }
 
-    @Test(arguments: [NoteWriter.Outcome.written(UUID()), .waiting(.cloudConsent)])
-    func enqueueWhileTheJobRunsRunsItAgain(first: NoteWriter.Outcome) async throws {
+    @Test func enqueueWhileTheJobRunsRunsItAgain() async throws {
         let calls = CallCounter()
         let release = AsyncStream<Void>.makeStream()
         await handle { _ in
-            guard await calls.add() == 1 else { return .written(UUID()) }
+            guard await calls.add() == 1 else { return }
             for await _ in release.stream { break }
-            return first
         }
         await pipeline.start()
         await pipeline.enqueue(.enhance, meeting: meeting.id)

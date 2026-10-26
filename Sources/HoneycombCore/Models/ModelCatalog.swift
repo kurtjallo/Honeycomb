@@ -13,7 +13,6 @@ public struct ModelSpec: Sendable, Identifiable, Equatable {
     public let name: String
     public let repo: String
     public let revision: String
-    public let minRAMGB: Int
     public let license: String
     public let credit: String
     public let files: [ModelFile]
@@ -36,9 +35,5 @@ public enum ModelCatalog {
     public static let vad = "silero-vad"
     public static let parakeet = "parakeet-tdt-0.6b-v2"
     public static let builtInLLM = "qwen3.5-4b"
-    public static let largeLLM = "qwen3.5-9b"
     public static let embedder = "qwen3-embedding-0.6b"
-
-    /// The models a full setup needs. The 4B downloads only once a route uses it. The 9B is optional, from Settings.
-    public static let firstRun = [vad, parakeet, builtInLLM, embedder]
 }

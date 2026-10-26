@@ -5,7 +5,7 @@ import Foundation
 /// the database and replaces only its own outputs, so running one twice is safe.
 public actor Pipeline {
     public struct Handlers: Sendable {
-        public var enhance: (@Sendable (UUID) async throws -> NoteWriter.Outcome)?
+        public var enhance: (@Sendable (UUID) async throws -> Void)?
         public var index: (@Sendable (UUID) async throws -> Void)?
         public var sourceLink: (@Sendable (UUID) async throws -> Void)?
         public var mirrorMarkdown: (@Sendable (UUID) async throws -> Void)?
@@ -40,8 +40,7 @@ public actor Pipeline {
     private var handlers = Handlers()
     private var loop: Task<Void, Never>?
     private var wake: CheckedContinuation<Void, Never>?
-    /// `onThisMac` is decided at claim, so a route changed while the job runs doesn't hide it from a recording.
-    private var current: (job: Job, onThisMac: Bool, task: Task<Void, Error>, again: Bool)?
+    private var current: (job: Job, task: Task<Void, Error>, again: Bool)?
 
     public init(database: AppDatabase, paths: Paths, host: ModelHost, policy: Policy = Policy()) {
         self.database = database
@@ -93,28 +92,17 @@ public actor Pipeline {
         wake = nil
     }
 
-    /// A new recording takes priority: model work in progress on this Mac stops and goes back in the queue.
+    /// A new recording takes priority: model work in progress stops and goes back in the queue.
     public func recordingStarted() {
-        guard let current, current.onThisMac else { return }
+        guard let current, needsModel(current.job.kind) else { return }
         current.task.cancel()
     }
 
-    private func usesThisMac(_ kind: JobKind) -> Bool {
+    private func needsModel(_ kind: JobKind) -> Bool {
         switch kind {
         case .finalizeAudio, .mirrorMarkdown: false
-        case .transcribeFinal, .index, .sourceLink: true
-        case .enhance:
-            (try? database.route(.enhance)).flatMap { try? database.provider($0.providerId) }.map(Self.runsOnThisMac) ?? true
+        case .transcribeFinal, .enhance, .index, .sourceLink: true
         }
-    }
-
-    static func runsOnThisMac(_ provider: ProviderRecord) -> Bool {
-        if provider.kind == .builtin { return true }
-        guard var host = provider.baseUrl.flatMap(URL.init(string:))?.host(percentEncoded: false)?.lowercased() else { return false }
-        if host.hasSuffix(".") { host.removeLast() }
-        if ["localhost", "::1", "0.0.0.0"].contains(host) { return true }
-        let octets = host.split(separator: ".")
-        return octets.count == 4 && octets.first == "127" && octets.allSatisfy { UInt8($0) != nil }
     }
 
     private func recover() {
@@ -148,7 +136,7 @@ public actor Pipeline {
             let result = await task.result
             let again = current?.again == true
             current = nil
-            finish(job, result: result)
+            finish(job, result: result, preempted: task.isCancelled)
             if again, let meeting = job.meetingId { enqueue(job.kind, meeting: meeting) }
         }
     }
@@ -157,10 +145,10 @@ public actor Pipeline {
     /// job `current`: a recording that starts at any moment either keeps model jobs from being
     /// claimed or finds the job to cancel in `recordingStarted()`.
     private func claimNextJob() -> (Job, Task<Void, Error>)? {
-        let onThisMac = Set(JobKind.allCases.filter(usesThisMac))
-        guard let job = try? database.claimNextJob(skipping: host.gate.isRecording ? onThisMac : []) else { return nil }
+        let modelJobs = Set(JobKind.allCases.filter(needsModel))
+        guard let job = try? database.claimNextJob(skipping: host.gate.isRecording ? modelJobs : []) else { return nil }
         let task = Task { try await self.perform(job) }
-        current = (job, onThisMac.contains(job.kind), task, false)
+        current = (job, task, false)
         return (job, task)
     }
 
@@ -173,7 +161,7 @@ public actor Pipeline {
         timer.cancel()
     }
 
-    private func finish(_ job: Job, result: Result<Void, Error>) {
+    private func finish(_ job: Job, result: Result<Void, Error>, preempted: Bool) {
         switch result {
         case .success:
             try? database.finishJob(job)
@@ -181,7 +169,7 @@ public actor Pipeline {
             let reason = PipelineError.waitReason(for: error)
             try? database.deferJob(job, until: Date().addingTimeInterval(policy.waitRetry))
             if let meeting = job.meetingId { try? database.setState(meeting, .waiting, detail: reason?.rawValue) }
-        case .failure(is CancellationError):
+        case .failure where preempted:
             try? database.deferJob(job, until: Date())
             if job.kind == .enhance, let meeting = job.meetingId {
                 try? database.setState(meeting, .waiting, detail: WaitReason.modelBusy.rawValue)
@@ -215,9 +203,7 @@ public actor Pipeline {
                 try database.setState(meeting, .writingNotes)
             }
             guard let enhance = handlers.enhance else { return try database.setState(meeting, .ready) }
-            if case .waiting(let reason) = try await enhance(meeting) {
-                return try database.setState(meeting, .waiting, detail: reason.rawValue)
-            }
+            try await enhance(meeting)
             try database.setState(meeting, .indexing)
             enqueue(.index, meeting: meeting)
             enqueue(.sourceLink, meeting: meeting)
@@ -314,12 +300,10 @@ public actor Pipeline {
 }
 
 enum PipelineError {
-    /// Stored as a failed meeting's `state_detail`. A provider's code lets the banner show its message.
     static func code(for error: Error) -> String {
         switch error {
-        case let error as ProviderError: error.code
+        case let error as ChatError: error.rawValue
         case SessionMeta.ReadError.unreadable: "audio_meta_unreadable"
-        case is URLError: "network"
         default: "job_failed"
         }
     }
@@ -333,11 +317,11 @@ enum PipelineError {
         }
     }
 
-    /// A rejected key, a missing model, or a prompt that is still too long won't pass on a retry.
+    /// A prompt still too long after splitting, or a missing or garbled session file, fails the same way again.
+    /// A `truncated` or `cancelled` is left for the user's Retry.
     static func isRetryable(_ error: Error) -> Bool {
         switch error {
-        case SessionMeta.ReadError.unreadable: false
-        case let error as ProviderError: error.isTransient
+        case SessionMeta.ReadError.unreadable, is ChatError: false
         default: true
         }
     }

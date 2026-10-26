@@ -2,16 +2,15 @@ import Foundation
 import Testing
 @testable import HoneycombCore
 
-/// A spoken call recorded through the capture path, transcribed by Parakeet, and written up by a
-/// real AI model, with the pipeline wired the way `AppModel.launch` wires it.
-/// Run with HONEYCOMB_MODEL_TESTS=1. The Ollama test also needs `ollama serve` and `qwen3:0.6b`.
+/// A spoken call recorded through the capture path, transcribed by Parakeet, and written up by
+/// `NoteWriter` on `BuiltInProvider` as in `AppModel.launch`.
+/// Run with HONEYCOMB_MODEL_TESTS=1.
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["HONEYCOMB_MODEL_TESTS"] == "1"))
 struct EndToEndTests {
     let database: AppDatabase
     let paths = Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("e2e-\(UUID().uuidString)"))
     let host: ModelHost
     let pipeline: Pipeline
-    let router: ProviderRouter
 
     init() async throws {
         database = try AppDatabase.inMemory()
@@ -19,35 +18,20 @@ struct EndToEndTests {
         let store = ModelStore(root: Paths.standard.models, database: nil)
         host = ModelHost(store: store, speechIdleUnload: .seconds(1))
         pipeline = Pipeline(database: database, paths: paths, host: host)
-        router = ProviderRouter(database: database, keychain: Keychain(service: "io.github.kurtjallo.Honeycomb.e2e-tests"),
-                                builtIn: BuiltInLLM(store: store, host: host))
         try database.seedBuiltIns()
-        let router = self.router
-        let writer = NoteWriter(database: database) { try router.resolve($0) }
+        let writer = NoteWriter(database: database, chat: BuiltInProvider(llm: BuiltInLLM(store: store, host: host)))
         var handlers = Pipeline.Handlers()
         handlers.enhance = { try await writer.write($0) }
         await pipeline.setHandlers(handlers)
     }
 
     @Test func builtInModelWritesNotesForARecordedCall() async throws {
-        try database.saveRoute(Route(task: .enhance, providerId: ProviderRecord.builtIn.id, model: ModelCatalog.builtInLLM))
         let notes = try await notesForRecordedCall()
         #expect(notes.contains("sso") || notes.contains("single sign"), "notes mention the SSO condition")
         #expect(notes.contains("friday"), "notes mention the Friday deadline")
     }
 
-    @Test func ollamaWritesNotesForARecordedCall() async throws {
-        let draft = ProviderDraft(name: "Ollama", kind: .openAICompatible, baseURL: "http://localhost:11434/v1", contextTokens: 8_192)
-        let record = try router.save(draft)
-        #expect(record.isLocal)
-        try database.saveRoute(Route(task: .enhance, providerId: record.id, model: "qwen3:0.6b"))
-        let notes = try await notesForRecordedCall()
-        #expect(!notes.contains("<think>") && !notes.contains("</think>"), "reasoning is stripped")
-        #expect(notes.contains("friday") || notes.contains("pricing"), "notes reflect the call")
-    }
-
     @Test func aNewRecordingPausesNotesAndTheyFinishAfter() async throws {
-        try database.saveRoute(Route(task: .enhance, providerId: ProviderRecord.builtIn.id, model: ModelCatalog.builtInLLM))
         let id = try await recordCall()
         await pipeline.start()
         await pipeline.meetingStopped(id)

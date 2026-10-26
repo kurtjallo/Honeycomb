@@ -71,7 +71,6 @@ struct ModelStoreTests {
             #expect(spec.revision.count == 40)
             #expect(spec.files.allSatisfy { $0.sha256.count == 64 && $0.size > 0 })
         }
-        #expect(ModelCatalog.firstRun.allSatisfy { ModelCatalog.spec($0) != nil })
     }
 }
 

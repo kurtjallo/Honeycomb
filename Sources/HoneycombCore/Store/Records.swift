@@ -30,8 +30,6 @@ public enum WaitReason: String, Sendable {
     case modelMissing = "model_missing"
     /// A local model can't load while a call is being recorded.
     case modelBusy = "model_busy"
-    case cloudConsent = "cloud_consent"
-    case aiNotChosen = "ai_not_chosen"
 }
 
 public enum TitleSource: String, Codable, Sendable {
@@ -165,7 +163,6 @@ public struct EnhancedNote: HoneycombRecord, Identifiable, Equatable {
     public var id: UUID
     public var meetingId: UUID
     public var templateId: String?
-    public var providerId: String?
     public var model: String?
     public var doc: String?
     public var markdown: String
@@ -175,12 +172,11 @@ public struct EnhancedNote: HoneycombRecord, Identifiable, Equatable {
     public var createdAt: Date
     public var updatedAt: Date
 
-    public init(id: UUID = UUID(), meetingId: UUID, templateId: String?, providerId: String?, model: String?,
+    public init(id: UUID = UUID(), meetingId: UUID, templateId: String?, model: String?,
                 status: EnhancedStatus = .generating, now: Date = Date()) {
         self.id = id
         self.meetingId = meetingId
         self.templateId = templateId
-        self.providerId = providerId
         self.model = model
         markdown = ""
         schemaVersion = 1
@@ -323,65 +319,6 @@ public struct Chunk: HoneycombRecord, Equatable {
 
     public mutating func didInsert(_ inserted: InsertionSuccess) {
         id = inserted.rowID
-    }
-}
-
-public enum ProviderKind: String, Codable, Sendable {
-    case builtin
-    case openAICompatible = "openai_compatible"
-    case anthropic
-}
-
-public struct ProviderRecord: HoneycombRecord, Equatable, Identifiable {
-    public static let databaseTableName = "provider"
-    public var id: String
-    public var name: String
-    public var kind: ProviderKind
-    public var baseUrl: String?
-    /// Keychain account name. The key itself is never in SQLite.
-    public var keyRef: String?
-    public var contextTokens: Int
-    public var isLocal: Bool
-
-    public init(id: String, name: String, kind: ProviderKind, baseUrl: String? = nil, keyRef: String? = nil,
-                contextTokens: Int, isLocal: Bool) {
-        self.id = id
-        self.name = name
-        self.kind = kind
-        self.baseUrl = baseUrl
-        self.keyRef = keyRef
-        self.contextTokens = contextTokens
-        self.isLocal = isLocal
-    }
-}
-
-public enum AITask: String, Codable, Sendable, CaseIterable {
-    case enhance
-    case chat
-    case embed
-}
-
-public struct Route: HoneycombRecord, Equatable {
-    public static let databaseTableName = "route"
-    public var task: AITask
-    public var providerId: String
-    public var model: String
-
-    public init(task: AITask, providerId: String, model: String) {
-        self.task = task
-        self.providerId = providerId
-        self.model = model
-    }
-}
-
-public struct CloudConsent: HoneycombRecord, Equatable {
-    public static let databaseTableName = "cloud_consent"
-    public var providerId: String
-    public var grantedAt: Date
-
-    public init(providerId: String, grantedAt: Date = Date()) {
-        self.providerId = providerId
-        self.grantedAt = grantedAt
     }
 }
 
